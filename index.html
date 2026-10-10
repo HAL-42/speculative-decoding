@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投机采样 Speculative Decoding · 可视化讲解</title>
+<meta name="description" content="用 3Blue1Brown 风格的交互动画，从动机、直觉到严格证明，系统讲解大模型推理加速技术「投机采样 / Speculative Decoding」。">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script>
+  function renderMath(){
+    if (!window.renderMathInElement) return;
+    renderMathInElement(document.body, {
+      delimiters: [{left:'$$', right:'$$', display:true}, {left:'$', right:'$', display:false}],
+      ignoredClasses: ['no-math'], throwOnError: false
+    });
+  }
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" onload="renderMath()"></script>
+<style>
+:root{
+  --bg:#111214; --panel:#191b1f; --panel2:#212429; --line:#2e323a;
+  --text:#e4e4e4; --muted:#9aa0a8; --dim:#666b73;
+  --blue:#58C4DD; --yellow:#F4D345; --green:#83C167; --red:#FC6255;
+  --teal:#5CD0B3; --gold:#F0AC5F; --purple:#9A72AC; --pink:#D147BD;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Noto Sans SC","Microsoft YaHei",sans-serif;
+  font-size:17px;line-height:1.9;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+h1,h2,h3,.serif{font-family:"KaTeX_Main","Noto Serif SC","Source Han Serif SC","Songti SC","STSong",serif;font-weight:600}
+a{color:var(--blue);text-decoration:none;border-bottom:1px dotted rgba(88,196,221,.5)}
+a:hover{border-bottom-style:solid}
+b,strong{color:#fff;font-weight:600}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.86em;background:#22252b;padding:1px 6px;border-radius:4px;color:#ddd}
+#progress{position:fixed;top:0;left:0;height:3px;width:0;z-index:100;background:linear-gradient(90deg,var(--blue),var(--yellow))}
+
+/* ---------- layout ---------- */
+article{max-width:780px;margin:0 auto;padding:0 22px 80px}
+.widget{position:relative;left:50%;transform:translateX(-50%);width:min(1000px,calc(100vw - 28px));
+  background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:30px 0 14px}
+.cap{font-size:14px;color:var(--muted);text-align:center;margin:0 0 30px;line-height:1.7}
+section.chapter{padding-top:40px}
+.ch-num{font-size:14px;letter-spacing:.3em;color:var(--blue);margin-bottom:-6px}
+h2{font-size:34px;line-height:1.35;margin:4px 0 22px;color:#fff}
+h3{font-size:22px;margin:38px 0 10px;color:#f2f2f2}
+p{margin:14px 0}
+.c-blue,.draft{color:var(--blue)} .c-yellow,.target{color:var(--yellow)} .c-green,.acc{color:var(--green)}
+.c-red,.rej{color:var(--red)} .c-gold{color:var(--gold)} .c-teal{color:var(--teal)} .c-muted{color:var(--muted)}
+hr.sep{border:none;text-align:center;margin:60px 0 10px;color:var(--dim)}
+hr.sep:after{content:"◆  ◆  ◆";letter-spacing:.6em;font-size:12px}
+
+.note{border-left:3px solid var(--dim);padding:6px 16px;margin:18px 0;color:var(--muted);font-size:15px;background:#15171a}
+.insight{border:1px solid rgba(244,211,69,.35);background:rgba(244,211,69,.05);border-radius:10px;padding:14px 18px;margin:24px 0}
+.insight .tag{font-size:13px;color:var(--yellow);letter-spacing:.15em;display:block;margin-bottom:2px}
+.mental{border:1px solid rgba(88,196,221,.4);background:linear-gradient(135deg,rgba(88,196,221,.08),rgba(244,211,69,.05));
+  border-radius:14px;padding:20px 24px;margin:30px 0}
+.mental .tag{font-size:13px;color:var(--blue);letter-spacing:.2em}
+.mental ol{margin:8px 0 0;padding-left:22px}
+.mental li{margin:8px 0}
+.katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
+.katex{font-size:1.06em}
+
+/* ---------- hero ---------- */
+.hero{min-height:92vh;display:flex;flex-direction:column;justify-content:center;padding-top:30px}
+.hero h1{font-size:64px;margin:0;line-height:1.15;color:#fff;letter-spacing:.04em}
+.hero .en{font-family:"KaTeX_Main",serif;font-size:26px;color:var(--blue);margin-top:4px;font-style:italic}
+.hero .tagline{font-size:19px;color:#cfcfcf;margin:18px 0 0}
+.scroll-hint{text-align:center;color:var(--dim);font-size:13px;margin-top:20px;animation:bob 2s infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+
+/* ---------- controls ---------- */
+.btn{background:transparent;border:1px solid #3a3f48;color:var(--text);padding:5px 14px;border-radius:7px;cursor:pointer;
+  font:inherit;font-size:14px;line-height:1.6;transition:all .2s;white-space:nowrap}
+.btn:hover{border-color:var(--blue);color:var(--blue)}
+.btn.primary{border-color:var(--yellow);color:var(--yellow)}
+.btn.primary:hover{background:rgba(244,211,69,.1)}
+.btn.on{background:#2b3038;border-color:var(--blue);color:var(--blue)}
+.btn:disabled{opacity:.35;cursor:default}
+.ctrl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px}
+.ctrl .sp{flex:1}
+.ctrl label{font-size:14px;color:var(--muted)}
+input[type=range]{accent-color:var(--blue);width:180px;vertical-align:middle}
+.readout{font-family:ui-monospace,Menlo,monospace;font-size:14px;color:#ddd}
+.legend{font-size:13px;color:var(--muted)}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-1px;margin:0 4px 0 10px}
+svg{display:block;width:100%;height:auto;user-select:none;-webkit-user-select:none}
+.svg-lab{fill:#ddd;font-size:18px;font-family:"KaTeX_Main","Songti SC",serif}
+.svg-small{font-size:12px;fill:var(--muted)}
+.svg-axis{font-size:12px;fill:#888;font-family:ui-monospace,Menlo,monospace}
+.svg-tok{font-size:17px;font-family:"Songti SC","Noto Serif SC",serif}
+.svg-title{font-size:14px;fill:#bbb}
+
+/* ---------- race ---------- */
+.lane{margin:6px 0 18px}
+.lane-head{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;font-size:14px;color:var(--muted)}
+.lane-name{color:#fff;font-weight:600;font-size:15px}
+.lane-stat b{color:var(--yellow);font-family:ui-monospace,Menlo,monospace}
+.lane-text{font-family:"Songti SC","Noto Serif SC",serif;font-size:23px;min-height:76px;line-height:1.6;margin-top:6px;letter-spacing:.02em}
+.lane-track{position:relative;height:16px;background:#121418;border-radius:3px;margin-top:6px;overflow:hidden}
+.blk{position:absolute;top:2px;bottom:2px;border-right:1px solid #121418}
+.blk.target{background:var(--yellow);opacity:.85}
+.blk.draft{background:var(--blue);top:5px;bottom:5px;opacity:.9}
+.tk{display:inline-block;transition:color .35s,opacity .4s,max-width .4s;white-space:pre}
+.tk.ghost{color:var(--blue);font-style:italic;opacity:.9}
+.tk.acc{color:var(--green)}
+.tk.rej{color:var(--red);text-decoration:line-through}
+.tk.void{color:var(--dim);text-decoration:line-through;opacity:.45}
+.tk.fix{color:var(--yellow)}
+.tk.eos{font-size:13px;color:var(--dim);font-family:ui-monospace,Menlo,monospace;vertical-align:middle}
+.tk.gone{opacity:0}
+.tk.pop{animation:pop .35s ease-out}
+@keyframes pop{0%{transform:translateY(6px);opacity:0}100%{transform:none;opacity:1}}
+.badge{display:inline-block;padding:2px 12px;border-radius:20px;background:rgba(131,193,103,.15);color:var(--green);font-size:14px;opacity:0;transition:opacity .5s}
+.badge.show{opacity:1}
+
+/* ---------- roofline ---------- */
+.meters{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:10px}
+.mbox{background:var(--panel2);border-radius:10px;padding:10px 14px}
+.mbox .k{font-size:13px;color:var(--muted)}
+.mbox .v{font-size:22px;font-family:"KaTeX_Main",serif;color:#fff}
+.bar{height:8px;background:#2b2e34;border-radius:4px;overflow:hidden;margin-top:6px}
+.bar>div{height:100%;background:var(--green);width:0;transition:width .15s}
+
+/* ---------- stepper ---------- */
+.sd-out{background:#131518;border-radius:10px;padding:12px 16px;font-family:"Songti SC","Noto Serif SC",serif;font-size:24px;min-height:62px;line-height:1.6}
+.sd-out .ok{color:#eee}
+.sd-out .fx{color:var(--yellow)}
+.caret{display:inline-block;width:2px;height:24px;background:var(--blue);vertical-align:-4px;margin-left:2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.phases{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 10px;font-size:13px}
+.phases span{padding:2px 10px;border-radius:14px;border:1px solid var(--line);color:var(--dim);transition:all .3s}
+.phases span.cur{border-color:var(--yellow);color:var(--yellow);background:rgba(244,211,69,.08)}
+.phases .round{margin-left:auto;border:none;color:var(--muted)}
+.sd-slots{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.slot{background:var(--panel2);border:1.5px solid var(--line);border-radius:10px;padding:8px 10px;min-height:212px;transition:border-color .3s,opacity .4s,box-shadow .4s}
+.slot .idx{font-size:12px;color:var(--dim);text-align:center}
+.slot .tok{font-size:26px;text-align:center;font-family:"Songti SC","Noto Serif SC",serif;color:var(--blue);min-height:42px;line-height:1.6}
+.slot .row{font-size:13px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;opacity:0;transition:opacity .35s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slot .row.show{opacity:1}
+.slot .rq{color:var(--blue)} .slot .rp{color:var(--yellow)}
+.meter{position:relative;height:10px;background:#33363d;border-radius:5px;margin:10px 2px 8px;opacity:0;transition:opacity .3s}
+.meter .fill{position:absolute;left:0;top:0;bottom:0;background:var(--green);border-radius:5px;opacity:.65}
+.meter .u{position:absolute;top:-5px;width:3px;height:20px;background:#fff;left:0;border-radius:1px;margin-left:-1px}
+.slot .verdict{text-align:center;font-weight:600;font-size:15px;min-height:24px}
+.slot.acc{border-color:var(--green)} .slot.acc .verdict{color:var(--green)}
+.slot.rej{border-color:var(--red)} .slot.rej .verdict{color:var(--red)} .slot.rej .tok{text-decoration:line-through;color:var(--red)}
+.slot.void{opacity:.35} .slot.void .tok{text-decoration:line-through}
+.slot.flash{box-shadow:0 0 0 2px rgba(244,211,69,.5)}
+.slot.extra{border-style:dashed}
+.slot.extra .tok{color:var(--yellow)}
+.slot.fixed{border-color:var(--yellow);border-style:solid}
+.slot.pop .tok{animation:pop .35s}
+.sd-narr{margin-top:14px;padding:10px 14px;border-radius:8px;background:#15171b;color:#d6d6d6;font-size:15px;min-height:72px;line-height:1.8}
+.counters{font-size:14px;color:var(--muted)}
+.counters b{font-family:ui-monospace,Menlo,monospace;color:#fff}
+
+/* ---------- geometry / mc ---------- */
+.geo-wrap{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.geo-wrap>svg{flex:1 1 560px;min-width:0}
+.geo-info{flex:1 1 250px;background:var(--panel2);border-radius:10px;padding:12px 14px;font-size:14px;line-height:1.9}
+.geo-info .ih{font-size:16px;color:#fff;margin-bottom:4px}
+.geo-info .sum{border-top:1px solid var(--line);margin-top:6px;padding-top:6px;color:#fff}
+.geo-info .stats{border-top:1px solid var(--line);margin-top:8px;padding-top:8px;color:var(--muted)}
+.mono{font-family:ui-monospace,Menlo,monospace}
+.seg{display:inline-flex;border:1px solid #3a3f48;border-radius:7px;overflow:hidden}
+.seg button{border:none;border-radius:0;border-right:1px solid #3a3f48}
+.seg button:last-child{border-right:none}
+
+/* ---------- speedup ---------- */
+.sp-grid{display:grid;grid-template-columns:1fr 1.15fr;gap:16px}
+.sliders{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:6px 20px;margin-bottom:8px}
+.sliders label{display:flex;align-items:center;gap:10px;font-size:15px}
+.sliders input{flex:1}
+.sliders .val{width:48px;text-align:right;font-family:ui-monospace,Menlo,monospace;color:#fff}
+
+/* ---------- pseudocode ---------- */
+pre.algo{background:#14161a;border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow-x:auto;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;line-height:1.85;color:#d8d8d8}
+pre.algo .cm{color:#6f7680} pre.algo .kw{color:var(--purple)} pre.algo .d{color:var(--blue)} pre.algo .t{color:var(--yellow)}
+pre.algo .g{color:var(--green)} pre.algo .r{color:var(--red)}
+
+/* ---------- cards ---------- */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:20px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;font-size:15px;line-height:1.75}
+.card h4{margin:0 0 6px;font-size:17px;color:#fff}
+.card .kind{font-size:12px;color:var(--teal);letter-spacing:.1em}
+.card p{margin:6px 0}
+table.sym{border-collapse:collapse;width:100%;font-size:15px;margin:16px 0}
+table.sym td{border-bottom:1px solid var(--line);padding:6px 10px;vertical-align:top}
+table.sym td:first-child{width:140px;text-align:center}
+
+/* ---------- quiz ---------- */
+.quiz{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:16px 0}
+.quiz .qq{font-size:16px;color:#fff;margin-bottom:8px}
+.quiz .opts{display:flex;flex-direction:column;gap:6px}
+.quiz .opt{text-align:left;white-space:normal}
+.quiz .opt.right{border-color:var(--green);color:var(--green);background:rgba(131,193,103,.08)}
+.quiz .opt.wrong{border-color:var(--red);color:var(--red)}
+.quiz .exp{display:none;margin-top:10px;font-size:15px;color:#cfcfcf;border-left:3px solid var(--green);padding-left:12px}
+.quiz.done .exp{display:block}
+
+/* ---------- toc ---------- */
+#toc{position:fixed;left:18px;top:50%;transform:translateY(-50%);font-size:13px;line-height:1.5;display:none;z-index:20;max-width:170px}
+#toc a{display:block;color:var(--dim);border:none;padding:4px 0 4px 12px;border-left:2px solid #2a2d33;transition:all .2s}
+#toc a.active{color:var(--yellow);border-left-color:var(--yellow)}
+#toc a:hover{color:#ddd}
+@media (min-width:1360px){#toc{display:block}}
+
+.refs{font-size:14px;color:var(--muted);line-height:1.8}
+.refs li{margin:6px 0}
+footer{text-align:center;color:var(--dim);font-size:13px;padding:40px 0 60px}
+
+@media (max-width:700px){
+  body{font-size:16px}
+  .hero h1{font-size:44px}
+  h2{font-size:26px}
+  .widget{padding:12px 10px}
+  .sp-grid{grid-template-columns:1fr}
+  .slot{padding:6px 4px;min-height:200px}
+  .slot .tok{font-size:19px}
+  .slot .row{font-size:10px}
+  .lane-text{font-size:19px}
+}
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<nav id="toc"></nav>
+
+<article>
+
+<!-- ======================= HERO ======================= -->
+<header class="hero">
+  <h1>投机采样</h1>
+  <div class="en">Speculative Decoding</div>
+  <p class="tagline">让小模型<span class="c-blue">先猜</span>，让大模型<span class="c-yellow">后验</span>。生成速度快 2～3 倍，输出分布与大模型<b>完全相同</b>。</p>
+
+  <div class="widget no-math" id="race">
+    <div class="lane" id="laneA">
+      <div class="lane-head"><span class="lane-name">普通自回归解码</span>
+        <span class="lane-stat">用时 <b class="t">0.00</b> s · 大模型调用 <b class="n">0</b> 次</span></div>
+      <div class="lane-text"></div>
+      <div class="lane-track"></div>
+    </div>
+    <div class="lane" id="laneB">
+      <div class="lane-head"><span class="lane-name">投机采样</span>
+        <span class="lane-stat">用时 <b class="t">0.00</b> s · 大模型调用 <b class="n">0</b> 次 · 小模型调用 <b class="m">0</b> 次</span></div>
+      <div class="lane-text"></div>
+      <div class="lane-track"></div>
+    </div>
+    <div class="ctrl">
+      <button class="btn primary" id="raceBtn">▶ 重新播放</button>
+      <span class="badge" id="raceBadge"></span>
+      <span class="sp"></span>
+      <span class="legend"><i style="background:var(--yellow)"></i>大模型前向 <i style="background:var(--blue)"></i>小模型前向
+        <i style="background:var(--green)"></i>猜对 <i style="background:var(--red)"></i>猜错</span>
+    </div>
+  </div>
+  <p class="cap">两行在生成同一句话。时间按比例缩放：小模型一次前向的耗时约为大模型的 1/8。</p>
+  <p>上面一行是普通解码：大模型每做一次前向，只能吐出一个 token。下面一行是投机采样：<span class="c-blue">小模型</span>先飞快地猜出几个 token（蓝色斜体），<span class="c-yellow">大模型</span>一次性检查所有猜测，留下猜对的（<span class="c-green">绿色</span>），从第一个猜错的位置（<span class="c-red">红色</span>）开始改写成自己的答案（<span class="c-yellow">黄色</span>）。</p>
+  <p>这里有三个问题值得追问：<b>为什么这样会更快？</b>大模型「检查」难道不要时间吗？<b>凭什么一点不损失质量？</b>毕竟小模型的猜测经常是错的。<b>到底能快多少？</b>这篇文章会一个一个回答，最后你应该能自己从头推出整个算法。</p>
+  <div class="scroll-hint">向下滚动 ↓</div>
+</header>
+
+<!-- ======================= CH1 ======================= -->
+<section class="chapter" id="ch1">
+  <div class="ch-num">第一章</div>
+  <h2 data-toc="慢的根源">慢的根源：大模型在「等」，不是在「算」</h2>
+
+  <p>先回顾一下语言模型怎样生成文本。给定前缀 $x_{&lt;t}$，模型输出下一个 token 的分布 $p(\cdot \mid x_{&lt;t})$，我们从中采样 $x_t$，把它接到前缀后面，再预测下一个……</p>
+  $$x_t \sim p(\cdot \mid x_1,\dots,x_{t-1}),\qquad t = 1, 2, \dots$$
+  <p>第 $t$ 个 token 必须等第 $t-1$ 个 token 确定以后才能开始算，所以生成 $K$ 个 token 需要 <b>$K$ 次串行的前向计算</b>。这件事乍看理所当然，但要理解投机采样，得先问一个更细的问题：<b>一次前向的时间到底花在哪里？</b></p>
+
+  <h3>算一笔账</h3>
+  <p>以一个 70B 参数、FP16 存储的模型跑在一张 H100 上为例（忽略 KV cache，只算个大概）：</p>
+  <ul>
+    <li><b>搬运：</b>每生成一个 token，所有权重都要从显存（HBM）读进计算单元一遍。140 GB ÷ 3.35 TB/s ≈ <b class="c-blue">42 ms</b>。</li>
+    <li><b>计算：</b>一个 token 的前向大约需要 $2 \times 70\text{B} = 140$ GFLOP。H100 的稠密 BF16 算力约 989 TFLOPS，算完只要 <b class="c-red">0.14 ms</b>。</li>
+  </ul>
+  <p>两者差了约 300 倍。也就是说，以 batch=1 解码时，<b>计算单元 99% 以上的时间都在等数据</b>。这种情形叫<b>访存受限</b>（memory-bound）：瓶颈是显存带宽，不是算力。</p>
+  <p>由此可以推出一个关键结论：权重既然已经搬进来了，<b>顺便多算几个位置几乎不花额外时间</b>。拖动下面的滑块，看看一次前向同时处理 $k$ 个 token 时，耗时如何变化。</p>
+
+  <div class="widget no-math" id="roof">
+    <svg id="roofSvg" viewBox="0 0 760 330"></svg>
+    <div class="ctrl">
+      <label>一次前向处理的 token 数 k =</label>
+      <input type="range" id="roofK" min="0" max="10" step="0.01" value="0">
+      <span class="readout" id="roofKv">1</span>
+      <span class="sp"></span>
+      <button class="btn" data-k="1">k = 1（普通解码）</button>
+      <button class="btn" data-k="5">k = 5（验证 4 个草稿）</button>
+      <button class="btn" data-k="512">k = 512（Prefill）</button>
+    </div>
+    <div class="meters">
+      <div class="mbox"><div class="k">一次前向耗时</div><div class="v" id="roofT">41.8 ms</div></div>
+      <div class="mbox"><div class="k">平均每个 token 耗时</div><div class="v" id="roofPer">41.8 ms</div></div>
+      <div class="mbox"><div class="k">算力利用率（理想 roofline 估算）</div><div class="v" id="roofU">0.3%</div><div class="bar"><div id="roofUb"></div></div></div>
+    </div>
+  </div>
+  <p class="cap">70B FP16 模型在 H100 上的理想化 roofline：耗时 ≈ max(读权重时间, 计算时间)。<br>真实系统还有 KV cache 读取、kernel 开销和多卡通信，具体数字会不同，但「batch=1 解码严重访存受限」这个结论很稳健。</p>
+
+  <p>在 $k$ 达到几百之前，曲线几乎是平的：处理 1 个 token 和处理 5 个 token，耗时都约等于读一遍权重的 42 ms。这正是 prefill（一次性处理整段 prompt）比逐个生成快得多的原因。</p>
+
+  <div class="insight"><span class="tag">关键矛盾</span>
+    硬件希望<b>一次处理很多 token</b>，自回归依赖却规定<b>一次只能确定一个 token</b>。打个比方：开一辆大卡车往工地运砖，往返时间是固定的，多装几块砖几乎不费事；麻烦在于下一块砖要什么形状，得等这一块砌好了才知道。投机采样要做的，就是在这对矛盾之间撬开一道缝。
+  </div>
+</section>
+
+<!-- ======================= CH2 ======================= -->
+<section class="chapter" id="ch2">
+  <div class="ch-num">第二章</div>
+  <h2 data-toc="关键的不对称">关键的不对称：检查比生成便宜</h2>
+
+  <p>我们没法并行地<b>生成</b>多个 token，但可以并行地<b>检查</b>多个 token。</p>
+  <p>假设手里已经有一段候选续写 $\tilde x_1, \dots, \tilde x_\gamma$（先别管它从哪来）。把它接在前缀后面送进大模型，做<b>一次</b>前向。因果注意力保证每个位置只能看到自己和之前的 token，所以这一次前向会同时给出 $\gamma+1$ 个条件分布：</p>
+  $$p(\cdot \mid x_{&lt;t}),\;\; p(\cdot \mid x_{&lt;t}, \tilde x_1),\;\; p(\cdot \mid x_{&lt;t}, \tilde x_{1:2}),\;\; \dots,\;\; p(\cdot \mid x_{&lt;t}, \tilde x_{1:\gamma})$$
+  <p>这和训练时的 teacher forcing 完全是一回事：一次前向就能拿到序列中每个位置的预测。区别只在于这里的「标准答案」是别人猜的。</p>
+
+  <div class="widget no-math" id="par">
+    <svg id="parSvg" viewBox="0 0 760 360"></svg>
+    <div class="ctrl">
+      <button class="btn" id="parSerial">串行：逐个生成</button>
+      <button class="btn primary" id="parPar">并行：一次验证 4 个草稿</button>
+      <span class="sp"></span>
+      <span class="readout" id="parCnt"></span>
+    </div>
+  </div>
+  <p class="cap">「串行」模式下，每一步都要等上一步的结果，5 个位置需要 5 次前向。「并行」模式下，<span class="c-blue">草稿</span>已经给定，5 个位置的分布一次前向就全部算完。<br>根据第一章的结论，这两种模式下单次前向的耗时几乎一样。</p>
+
+  <p>下面的注意力掩码说明了「一次前向得到多个位置的分布」为什么成立：第 $i$ 行（查询）只能看到第 $\le i$ 列（键），所以「核心」这一行算出的分布只依赖「…的 核心」，和后面的草稿无关。</p>
+  <div class="widget no-math" style="max-width:560px">
+    <svg id="maskSvg" viewBox="0 0 480 250"></svg>
+  </div>
+  <p class="cap">因果掩码：<span class="c-yellow">黄色</span>格子表示「可以看见」。KV cache 中已经缓存的前缀对所有位置可见。</p>
+
+  <h3>一个熟悉的类比</h3>
+  <p>写作文很慢，因为要一个字一个字地想；批改作文快得多，老师一眼能扫过整行。而且批改天然是并行的，整行字同时摆在眼前。</p>
+  <p>计算机体系结构里早有类似的思想：CPU 的<b>推测执行</b>（speculative execution）。分支条件还没算出来，处理器就按预测的方向继续执行；猜对了白赚时间，猜错了就丢掉结果重来。投机采样（speculative decoding）的名字正是从这里来的。Leviathan 等人的贡献是把这个思想推广到<b>随机</b>的场合：要「猜」的不是一个确定值，而是从一个分布中抽出的样本。</p>
+
+  <div class="insight"><span class="tag">至此我们知道</span>
+    只要有一段<b>便宜的候选续写</b>，大模型就能用约一次前向的代价把它检查完。剩下两个问题：<br>
+    ① 候选从哪来？最简单的答案是用一个<b>小模型</b>来猜。<br>
+    ② 怎样「检查」才能保证最终输出<b>和大模型自己生成的分布一模一样</b>？这是全文的核心，第四章专门讲。
+  </div>
+</section>
+
+<!-- ======================= CH3 ======================= -->
+<section class="chapter" id="ch3">
+  <div class="ch-num">第三章</div>
+  <h2 data-toc="心智模型">心智模型：起草 → 验证 → 纠正</h2>
+
+  <p>先给两个角色起名字：</p>
+  <table class="sym">
+    <tr><td><span class="c-blue">$M_q$</span>，分布 <span class="c-blue">$q$</span></td><td><b>草稿模型</b>（draft / approximation model）：小、快，不太准。比如和目标模型同系列的小参数版本。</td></tr>
+    <tr><td><span class="c-yellow">$M_p$</span>，分布 <span class="c-yellow">$p$</span></td><td><b>目标模型</b>（target model）：大、慢、准。我们真正想从它的分布中采样。</td></tr>
+    <tr><td>$\gamma$</td><td>每轮起草的 token 数（草稿长度）。</td></tr>
+  </table>
+  <p>投机采样的一轮由三步组成：</p>
+  <ol>
+    <li><b class="c-blue">起草</b>：$M_q$ 自回归地采样 $\gamma$ 个 token $\tilde x_1, \dots, \tilde x_\gamma$，同时记下每个 token 的草稿概率 $q_i(\tilde x_i)$。共 $\gamma$ 次小模型前向，很便宜。</li>
+    <li><b class="c-yellow">验证</b>：$M_p$ 对「前缀 + 全部草稿」做<b>一次</b>前向，得到 $\gamma+1$ 个位置的分布 $p_1, \dots, p_{\gamma+1}$。</li>
+    <li><b class="c-green">纠正</b>：从左到右逐个检验草稿。遇到第一个被拒绝的 token，就用一个修正分布重新采样这个位置，然后<b>丢弃它之后的所有草稿</b>。如果全部通过，再从 $p_{\gamma+1}$ 额外采样一个 token，这个 token 是白送的。</li>
+  </ol>
+  <p>下面逐步走一遍本页开头那句话的生成过程（$\gamma=4$）。每点一次「下一步」，前进一个阶段。</p>
+
+  <div class="widget no-math" id="stepper">
+    <div class="sd-out"><span id="sdText"></span><span class="caret"></span></div>
+    <div class="phases" id="sdPhases">
+      <span>① 起草</span><span>② 并行验证</span><span>③ 逐个检验</span><span>④ 纠正 / 奖励</span>
+      <span class="round" id="sdRound">第 1 / 6 轮</span>
+    </div>
+    <div class="sd-slots" id="sdSlots"></div>
+    <div class="sd-narr" id="sdNarr"></div>
+    <div class="ctrl">
+      <button class="btn primary" id="sdNext">下一步 ▸</button>
+      <button class="btn" id="sdAuto">▶ 自动播放</button>
+      <button class="btn" id="sdReset">↺ 重置</button>
+      <span class="sp"></span>
+      <span class="counters">大模型调用 <b id="sdT">0</b> 次 · 小模型调用 <b id="sdD">0</b> 次 · 已生成 <b id="sdN">0</b> 个 token</span>
+    </div>
+  </div>
+  <p class="cap"><span class="c-blue">q</span> 是草稿模型给自己所猜 token 的概率，<span class="c-yellow">p</span> 是目标模型给同一个 token 的概率。<br>白色竖线是随机数 u，绿色区域是接受概率 min(1, p/q)。u 落在绿色区域内就接受。</p>
+
+  <p>回顾这个例子，有几点值得留意：</p>
+  <ul>
+    <li><b>每轮至少产出 1 个 token。</b>第 3 轮第一个草稿就被拒绝了，但大模型那次前向并没有白做，它仍然产出了一个纠正 token。所以最坏情况下，投机采样只比普通解码多花了起草的成本。</li>
+    <li><b>每轮最多产出 $\gamma+1$ 个 token。</b>第 2、4 轮全部草稿都被接受，外加 1 个奖励 token。</li>
+    <li><b>拒绝之后必须丢弃后面的所有草稿。</b>它们是在错误前缀上生成的，大模型为它们算的分布也基于错误前缀，所以全部作废。</li>
+    <li>容易的 token（「采样」紧跟「投机」、句末的「。」）小模型基本都能猜对；难的、需要「思考」的 token（「快速」「并行」），由大模型亲自给出。</li>
+  </ul>
+
+  <div class="mental"><span class="tag">心智模型</span>
+    <ol>
+      <li>大模型的时间是<b>按「次」计费</b>的，不是按 token 计费：一次前向处理 1 个 token 还是 5 个，价钱差不多。</li>
+      <li>投机采样把很多次计费合并成一次：<span class="c-blue">便宜的模型提出假设</span>，<span class="c-yellow">昂贵的模型一次性审阅</span>，从第一个分歧处纠正。</li>
+      <li>文本中有大量「显而易见」的 token，小模型就能猜对；越是这样的文本，加速越明显。</li>
+    </ol>
+  </div>
+
+  <p>还剩一个关键问题没有回答：<b>检验规则到底是什么？</b>如果是贪心解码（temperature = 0），规则很直观：草稿 token 等于大模型的 argmax 就接受。可我们通常要<b>采样</b>，这时大模型对同一个前缀也可能输出不同的 token，「猜对」该怎么定义？上面例子里的 $\min(1, p/q)$ 又是从哪来的？</p>
+</section>
+
+<!-- ======================= CH4 ======================= -->
+<section class="chapter" id="ch4">
+  <div class="ch-num">第四章</div>
+  <h2 data-toc="核心：修正拒绝采样">核心：怎样做到一点不差？</h2>
+
+  <p>先把问题从语言模型里抽象出来。只看一个位置：</p>
+  <div class="insight"><span class="tag">问题</span>
+    手里有一个样本 $\tilde x \sim q$，还知道两个分布 $p$、$q$ 的完整概率表（大模型那一次前向把 $p$ 算出来了）。我们想输出一个 $X$，满足：<br>
+    ① $X$ <b>严格服从 $p$</b>；<br>
+    ② <b>尽可能经常</b>直接用 $\tilde x$，即让 $P(X = \tilde x)$ 尽量大。
+  </div>
+
+  <p>先看两种朴素的做法：</p>
+  <ul>
+    <li><b>总是接受 $\tilde x$。</b>输出服从 $q$，质量退化成小模型的水平，不满足 ①。</li>
+    <li><b>大模型自己再独立采样一次，两者恰好相同才接受。</b>这满足 ①，但非常浪费。设想 $p$ 和 $q$ <i>完全一样</i>，都是 100 个 token 上的均匀分布：草稿明明完美，却只有 1% 的概率被接受。（这个例子来自 Google Research 的回顾博客。）</li>
+  </ul>
+  <p>第二种做法的问题在于它只用了「样本」，没有用「概率」。既然 $p$、$q$ 的概率表都在手上，就能做得聪明得多。</p>
+
+  <h3>修正拒绝采样（modified rejection sampling）</h3>
+  <p>规则只有两条：</p>
+  <ol>
+    <li>以概率 $\displaystyle \min\!\Big(1,\ \frac{p(\tilde x)}{q(\tilde x)}\Big)$ <b class="c-green">接受</b> $\tilde x$。也就是说，若 $q(\tilde x) \le p(\tilde x)$（草稿<b>低估</b>了这个 token）就直接接受；若 $q(\tilde x) > p(\tilde x)$（草稿<b>高估</b>了它）就只以 $p/q$ 的概率接受。</li>
+    <li>若<b class="c-red">拒绝</b>，从<b>残差分布</b>中重新采样：
+    $$p'(x) = \frac{\max\big(0,\; p(x) - q(x)\big)}{\sum_{x'} \max\big(0,\; p(x') - q(x')\big)}$$</li>
+  </ol>
+  <p>第一条容易理解：草稿高估了的 token，接受时就打个折。第二条比较神秘：为什么偏偏是 $\max(0, p-q)$？下面的图会让它变得显然。</p>
+
+  <h3>一幅图看懂</h3>
+  <p>把 <span class="c-blue">$q$</span> 画成一排柱子。「从 $q$ 中抽样 $\tilde x$，再抽 $u \sim U(0,1)$」等价于<b>在蓝色柱子覆盖的区域里均匀撒一个点</b>：点的横坐标是 $\tilde x$，纵坐标是 $u \cdot q(\tilde x)$。接受条件 $u < p/q$ 等价于 $u \cdot q < p$，即<b>这个点落在 <span class="c-yellow">$p$</span> 的高度以下</b>。</p>
+  <p>按 ①②③ 的顺序点一遍。你可以在图上<b>拖动</b>修改柱子的高度（先选择改 q 还是 p），或者把鼠标悬停在某一列上查看具体数字。</p>
+
+  <div class="widget no-math" id="geo">
+    <div class="ctrl" style="margin-top:0;margin-bottom:8px">
+      <div class="seg" id="geoStages">
+        <button class="btn on" data-s="1">① 两个分布</button>
+        <button class="btn" data-s="2">② 接受 / 拒绝</button>
+        <button class="btn" data-s="3">③ 被拒绝的概率去哪了？</button>
+      </div>
+      <span class="sp"></span>
+      <label>拖动修改：</label>
+      <div class="seg" id="geoMode">
+        <button class="btn on" data-m="q" style="color:var(--blue)">q 草稿</button>
+        <button class="btn" data-m="p" style="color:var(--yellow)">p 目标</button>
+      </div>
+    </div>
+    <div class="geo-wrap">
+      <svg id="geoSvg" viewBox="0 0 760 390" style="touch-action:none"></svg>
+      <div class="geo-info" id="geoInfo"></div>
+    </div>
+    <div class="ctrl">
+      <label>预设：</label>
+      <button class="btn" data-preset="default">默认</button>
+      <button class="btn" data-preset="close">很接近</button>
+      <button class="btn" data-preset="far">差异很大</button>
+      <button class="btn" data-preset="same">完全相同</button>
+      <button class="btn" data-preset="rand">随机</button>
+      <span class="sp"></span>
+      <span class="legend"><i style="background:var(--green)"></i>接受：min(p,q) <i style="background:var(--red)"></i>拒绝：(q−p)₊ <i style="background:var(--gold)"></i>缺口：(p−q)₊</span>
+    </div>
+  </div>
+  <p class="cap">例子：前缀「今天天气很」之后，草稿模型和目标模型对下一个词的分布。</p>
+
+  <p>图上的三步依次说明了：</p>
+  <ul>
+    <li><b class="c-green">绿色</b>（接受的部分）：在每一列上恰好是 $\min(p(x), q(x))$。草稿高估的列，绿色被截在 $p$ 的高度；草稿低估的列，绿色就是整根蓝柱。</li>
+    <li><b class="c-red">红色</b>（被拒绝的部分）：是 $q$ 超出 $p$ 的那一截，$\max(0, q - p)$。它的总面积就是拒绝概率 $1-\beta$，其中 $\beta = \sum_x \min(p, q)$。</li>
+    <li><b class="c-gold">缺口</b>：要得到 $p$，绿色还差 $p$ 超出 $q$ 的那一截，$\max(0, p - q)$。</li>
+  </ul>
+  <p>关键在于：<b>红色的总量恰好等于缺口的总量</b>。因为两者都等于 $1 - \sum_x \min(p, q)$：</p>
+  $$\sum_x \max(0, q-p) = \sum_x \big(q - \min(p,q)\big) = 1-\beta = \sum_x \big(p - \min(p,q)\big) = \sum_x \max(0, p-q)$$
+  <p>所以被拒绝时，只需把这份「多出来的」概率<b>按缺口的形状</b>重新分配，就能把绿色补成完整的 $p$。「按缺口形状分配」写成公式，就是残差分布 $p' \propto \max(0, p-q)$。神秘的第二条规则其实是在<b>填坑</b>。</p>
+
+  <h3>严格证明</h3>
+  <p>输出 $X = x$ 只有两种途径：草稿恰好是 $x$ 并被接受；或者草稿（不论是什么）被拒绝，再从 $p'$ 中重新抽到 $x$。</p>
+  $$P(X=x) = \underbrace{q(x)\cdot\min\!\Big(1,\frac{p(x)}{q(x)}\Big)}_{\text{抽到 } x \text{ 且被接受}} \;+\; \underbrace{(1-\beta)\cdot p'(x)}_{\text{被拒绝后重抽到 } x}$$
+  <p>第一项化简为 $\min(p(x), q(x))$。第二项中，$p'$ 的归一化常数正是 $\sum_{x'} \max(0, p-q) = 1-\beta$，与拒绝概率相互抵消：</p>
+  $$(1-\beta)\cdot \frac{\max(0, p(x)-q(x))}{1-\beta} = p(x) - \min(p(x), q(x))$$
+  <p>两项相加：</p>
+  $$P(X = x) = \min(p(x),q(x)) + p(x) - \min(p(x),q(x)) = p(x) \qquad \blacksquare$$
+  <p>证明对<b>任意</b>的 $q$ 都成立。草稿模型再差，也只会降低速度，不会降低质量。</p>
+
+  <h3>接受率的含义</h3>
+  <p>接受概率 $\beta$ 有一个漂亮的解释：</p>
+  $$\beta = \sum_x \min(p(x), q(x)) = 1 - \tfrac{1}{2}\sum_x |p(x) - q(x)| = 1 - D_{\mathrm{TV}}(p, q)$$
+  <p>它等于 1 减去两个分布的<b>总变差距离</b>，也就是两条分布曲线重叠部分的面积。草稿与目标越像，接受率越高。在上面的图里点「完全相同」，$\beta$ 变成 1；点「差异很大」，$\beta$ 明显下降。</p>
+  <p>它还是<b>最优</b>的：对于任何满足 $X \sim p$、$\tilde x \sim q$ 的联合分布（耦合），都有 $P(X = \tilde x) \le \sum_x \min(p, q)$，因为 $P(X = \tilde x = x)$ 不可能超过 $p(x)$，也不可能超过 $q(x)$。修正拒绝采样恰好取到这个上界（它是一种<b>最大耦合</b>，maximal coupling）。在只有一个草稿样本的前提下，不可能有更高的接受率。</p>
+
+  <div class="note">
+    <b>与经典拒绝采样的区别：</b>经典拒绝采样需要一个上界 $M \ge \max_x p(x)/q(x)$，以 $p/(Mq)$ 的概率接受，否则<b>反复重试</b>。它的单次接受率 $1/M$ 往往远低于 $\beta$，而且重试次数没有上界。修正版本把「重试」换成了「从残差中精确补齐」，一次就保证结束。<br>
+    <b>阅读论文时注意符号：</b>Leviathan 等人（2022）用 $p$ 表示目标、$q$ 表示草稿，本文与之一致；DeepMind 的 Chen 等人（2023）恰好<b>反过来</b>，用 $q$ 表示目标、$p$ 表示草稿。
+  </div>
+</section>
+
+<!-- ======================= CH5 ======================= -->
+<section class="chapter" id="ch5">
+  <div class="ch-num">第五章</div>
+  <h2 data-toc="亲手验证">亲手验证：蒙特卡洛实验</h2>
+  <p>证明说服的是头脑，实验说服的是直觉。下面真的按规则一个一个地采样：先在蓝色柱子里撒点（相当于从 $q$ 中抽取草稿），落在 $p$ 以下变<span class="c-green">绿</span>（接受），否则变<span class="c-red">红</span>（拒绝），再按某种方式重新采样一个<span class="c-gold">金色</span>点。右边统计最终输出的频率，并与 <span class="c-yellow">$p$</span> 比较。</p>
+  <p>可以切换到两种「错误」的纠正方式，看看会发生什么。分布与上一章的图共享，在上一章里修改了分布，这里会同步更新。</p>
+
+  <div class="widget no-math" id="mc">
+    <div class="ctrl" style="margin-top:0;margin-bottom:6px">
+      <div class="seg" id="mcMode">
+        <button class="btn on" data-m="A">✓ 拒绝后从残差 (p−q)₊ 采样</button>
+        <button class="btn" data-m="B">✗ 拒绝后直接从 p 采样</button>
+        <button class="btn" data-m="C">✗ 不验证，直接收下草稿</button>
+      </div>
+    </div>
+    <svg id="mcSvg" viewBox="0 0 760 340"></svg>
+    <div class="ctrl">
+      <button class="btn primary" id="mc1">采样 1 次</button>
+      <button class="btn" id="mc10">10 次</button>
+      <button class="btn" id="mc1k">1000 次</button>
+      <button class="btn" id="mc10k">10000 次</button>
+      <button class="btn" id="mcClr">清空</button>
+      <span class="sp"></span>
+      <span class="readout" id="mcStat"></span>
+    </div>
+  </div>
+  <p class="cap">右图：灰色柱是实验频率，<span class="c-yellow">黄色框</span>是目标分布 p，白色虚线框是当前方式的理论分布。<br>TV 是实验分布与 p 的总变差距离，越接近 0 越好。</p>
+
+  <p>选「拒绝后直接从 $p$ 采样」时，结果会系统性地偏向草稿高估的 token（比如「好」）。原因是接受环节已经从这些 token 上拿到了 $\min(p, q)$ 的概率，即已经用掉了一部分「配额」；拒绝后再从完整的 $p$ 里抽，又给了它们一份，等于重复计算。这种方式的输出分布是</p>
+  $$\min(p, q) + (1-\beta)\,p \;\neq\; p$$
+  <p>残差分布 $\max(0, p - q)$ 的含义正是「<b>$p$ 中还没有被满足的那部分</b>」，只往缺口里补，才能分毫不差。</p>
+</section>
+
+<!-- ======================= CH6 ======================= -->
+<section class="chapter" id="ch6">
+  <div class="ch-num">第六章</div>
+  <h2 data-toc="完整算法">完整算法与它的正确性</h2>
+  <p>把单步的修正拒绝采样沿着草稿序列一个接一个地用下去，就得到完整算法（Leviathan et al. 2022, Algorithm 1）：</p>
+
+<pre class="algo no-math"><span class="cm">输入：已确定的前缀 prefix，草稿模型 M_q，目标模型 M_p，草稿长度 γ</span>
+
+<span class="cm">// ① 起草：草稿模型串行地猜 γ 个 token（便宜）</span>
+<span class="kw">for</span> i = 1 … γ:
+    <span class="d">q_i</span> ← <span class="d">M_q</span>(prefix + x̃₁ … x̃_{i−1})
+    <span class="d">x̃_i</span> ~ <span class="d">q_i</span>
+
+<span class="cm">// ② 验证：目标模型一次前向，并行得到 γ+1 个分布</span>
+<span class="t">p_1, …, p_{γ+1}</span> ← <span class="t">M_p</span>(prefix + x̃₁ … x̃_γ)
+
+<span class="cm">// ③ 从左到右检验</span>
+<span class="kw">for</span> i = 1 … γ:
+    r ~ U(0, 1)
+    <span class="kw">if</span> r &lt; min(1, <span class="t">p_i</span>(x̃_i) / <span class="d">q_i</span>(x̃_i)):
+        <span class="g">接受 x̃_i</span>
+    <span class="kw">else</span>:
+        y ~ norm( max(0, <span class="t">p_i</span> − <span class="d">q_i</span>) )          <span class="cm">// 从残差中纠正</span>
+        <span class="kw">return</span> prefix + x̃₁ … x̃_{i−1} + <span class="r">y</span>       <span class="cm">// 丢弃 x̃_i 之后的所有草稿</span>
+
+<span class="cm">// ④ 全部接受：从最后一个分布中免费多采一个</span>
+y ~ <span class="t">p_{γ+1}</span>
+<span class="kw">return</span> prefix + x̃₁ … x̃_γ + <span class="t">y</span></pre>
+
+  <h3>为什么多个 token 也是精确的？</h3>
+  <p>用归纳法。设已经确定的前缀是 $x_{&lt;t}$：</p>
+  <ul>
+    <li>第一个草稿 $\tilde x_1$ 是在<b>真实前缀</b> $x_{&lt;t}$ 下从 $q(\cdot\mid x_{&lt;t})$ 抽取的，$p_1$ 也是在同一前缀下算的。由单步引理，这个位置的输出 $x_t \sim p(\cdot\mid x_{&lt;t})$。</li>
+    <li>若 $\tilde x_1$ 被接受，则 $x_t = \tilde x_1$，于是 $\tilde x_2$ <b>恰好</b>是在真实前缀 $x_{\le t}$ 下抽取的，$p_2$ 也恰好以 $x_{\le t}$ 为条件。再用一次引理，得 $x_{t+1} \sim p(\cdot \mid x_{\le t})$。依此类推。</li>
+    <li>若某个位置被拒绝，这个位置由残差纠正（仍服从 $p$），后面的草稿全部作废，下一轮从新的真实前缀重新开始。</li>
+    <li>若全部接受，$p_{\gamma+1}$ 是以完整的真实前缀为条件算出来的，直接从中采样一个奖励 token 完全合法。</li>
+  </ul>
+  <p>每个位置的条件分布都是 $p$，由链式法则，整个序列服从 $\prod_t p(x_t \mid x_{&lt;t})$，和只用大模型逐个生成完全相同。</p>
+
+  <h3>贪心解码：一个退化特例</h3>
+  <p>temperature = 0 时，$p$ 和 $q$ 都退化成 one-hot 分布。接受概率 $\min(1, p/q)$ 只可能是 1（草稿等于大模型的 argmax）或 0；残差分布就是大模型 argmax 处的 one-hot。整个算法退化为「<b>猜对就收下，猜错就换成大模型的答案</b>」。这时的输出与普通贪心解码<b>逐字相同</b>（不计浮点误差）。</p>
+
+  <h3>temperature、top-k、top-p 怎么办？</h3>
+  <p>先对两个模型的 logits 做<b>同样的</b>变换（缩放温度、截断 top-k/top-p、重新归一化），得到它们<b>实际用于采样</b>的分布，把这两个分布当作 $p$、$q$ 代入检验即可。这样保证的是「和你原本的采样配置下，大模型的输出分布一样」。Chen 等人报告，接受率对这些参数的具体取值并不敏感。</p>
+
+  <div class="note">
+    <b>「无损」的准确含义：</b>保证的是<b>分布</b>相同，而不是「同一个随机种子生成同一句话」。另外，批量验证与逐个解码在浮点运算的累加顺序上可能不同，所以严格来说是「在硬件数值精度内」无损（Chen 等人的原话是 <i>within hardware numerics</i>）。<br>
+    <b>有损变体：</b>有些方法会故意放宽检验来换取更高的接受率，比如 Medusa 的 <i>typical acceptance</i>，或者 Leviathan 论文附录里的 <i>lenience</i> 参数。它们更快，但不再保证分布完全一致，使用时要心里有数。
+  </div>
+</section>
+
+<!-- ======================= CH7 ======================= -->
+<section class="chapter" id="ch7">
+  <div class="ch-num">第七章</div>
+  <h2 data-toc="能快多少">能快多少？</h2>
+
+  <p>引入两个量：</p>
+  <ul>
+    <li><b>平均接受率</b> $\alpha = \mathbb{E}[\beta]$：一个草稿 token 被接受的平均概率，由模型和任务决定。</li>
+    <li><b>成本系数</b> $c$ = 草稿模型一次前向的耗时 ÷ 目标模型一次前向的耗时，由硬件和实现决定。</li>
+  </ul>
+  <p>Leviathan 等人做了一个简化假设：各位置是否被接受<b>相互独立，且接受概率都是 $\alpha$</b>。记每轮产出的 token 数为 $N$。$N \ge n$ 当且仅当前 $n-1$ 个草稿全部被接受，所以 $P(N \ge n) = \alpha^{n-1}$，$n = 1, \dots, \gamma+1$。用「尾概率求和」公式：</p>
+  $$\mathbb{E}[N] = \sum_{n=1}^{\gamma+1} P(N \ge n) = \sum_{n=1}^{\gamma+1}\alpha^{n-1} = \frac{1-\alpha^{\gamma+1}}{1-\alpha}$$
+  <p>这是一个被截断在 $\gamma+1$ 处的几何分布。每轮的耗时是 $\gamma$ 次草稿前向加 1 次目标前向，即 $\gamma c + 1$（以目标模型一次前向为单位；这里用到了第一章的结论：验证 $\gamma+1$ 个 token 与生成 1 个 token 耗时相当）。于是墙钟时间的加速比为：</p>
+  $$\text{加速比} = \frac{1-\alpha^{\gamma+1}}{(1-\alpha)(\gamma c+1)}$$
+
+  <div class="widget no-math" id="spd">
+    <div class="sliders">
+      <label>α 接受率 <input type="range" id="spA" min="0" max="0.97" step="0.01" value="0.75"><span class="val" id="spAv"></span></label>
+      <label>γ 草稿长度 <input type="range" id="spG" min="1" max="16" step="1" value="5"><span class="val" id="spGv"></span></label>
+      <label>c 成本系数 <input type="range" id="spC" min="0" max="0.5" step="0.005" value="0.05"><span class="val" id="spCv"></span></label>
+    </div>
+    <div class="sp-grid">
+      <svg id="spBars" viewBox="0 0 400 260"></svg>
+      <svg id="spCurve" viewBox="0 0 440 260"></svg>
+    </div>
+    <div class="meters">
+      <div class="mbox"><div class="k">每轮期望产出 E[N]</div><div class="v" id="spEN"></div></div>
+      <div class="mbox"><div class="k">每轮成本 γc + 1</div><div class="v" id="spCost"></div></div>
+      <div class="mbox"><div class="k">理论加速比</div><div class="v" id="spS" style="color:var(--yellow)"></div></div>
+      <div class="mbox"><div class="k">当前 α、c 下的最优 γ*</div><div class="v" id="spBest" style="color:var(--gold)"></div></div>
+    </div>
+    <div class="ctrl">
+      <label>预设：</label>
+      <button class="btn" data-sp="0.75,7,0.015">T5-XXL ← T5-small，英德翻译，贪心</button>
+      <button class="btn" data-sp="0.62,7,0.015">同上，temperature=1</button>
+      <button class="btn" data-sp="0.4,3,0.05">草稿太弱</button>
+      <button class="btn" data-sp="0.8,4,0.4">草稿太慢</button>
+    </div>
+  </div>
+  <p class="cap">左图：每轮产出 token 数的分布（截断几何分布），竖虚线为均值。右图：加速比随 γ 的变化，<span class="c-blue">蓝色虚线</span>是 c = 0 时的上界 E[N]，金色星号标出最优 γ。<br>前两个预设的 α 取自 Leviathan 等人论文的表 2，c≈0.015 取自其正文；论文实测加速分别为 3.4× 和 2.6×，略高于这里的理论估算。</p>
+
+  <h3>几点观察</h3>
+  <ol>
+    <li><b>$\alpha$ 是收益的主要来源。</b>$\gamma=4$ 时，$\alpha$ 从 0.6 提高到 0.8，$\mathbb{E}[N]$ 就从 2.31 增加到 3.36。这也是后来大量工作致力于「让草稿更像目标」的原因。</li>
+    <li><b>$\gamma$ 不是越大越好。</b>$\mathbb{E}[N]$ 有上限 $1/(1-\alpha)$，成本 $\gamma c + 1$ 却线性增长，所以存在一个最优的 $\gamma^*$，可以简单地数值求出。Chen 等人的实验也观察到：$K$ 增大后加速比先进入平台期，再开始回落，同时延迟的方差越来越大。</li>
+    <li><b>只要 $\alpha > c$ 就一定有收益。</b>取 $\gamma=1$ 时加速比为 $(1+\alpha)/(1+c)$，只要 $\alpha > c$ 就大于 1（论文推论 3.9）。</li>
+    <li><b>最坏情况有保底。</b>每轮至少产出 1 个 token，所以最坏也只慢 $(\gamma c + 1)$ 倍，草稿越便宜损失越小。</li>
+    <li><b>独立同分布只是近似。</b>实际中接受率随上下文剧烈波动：代码里的重复结构、固定格式、复述 prompt 原文，接受率极高；开放式创作、高温采样，接受率较低。这启发了动态调整草稿长度和草稿树形状的方法（如 EAGLE-2）。</li>
+  </ol>
+
+  <h3>真实的数字</h3>
+  <ul>
+    <li><b>Leviathan et al. (2022)</b>：T5-XXL（11B）作目标，T5-small（77M）作草稿，英德翻译任务提速 2.6×（采样）～3.4×（贪心），输出完全一致。</li>
+    <li><b>Chen et al. (2023, DeepMind)</b>：Chinchilla 70B，分布式部署下提速 2～2.5×。他们注意到，用了投机采样后的平均吞吐常常<b>超过</b>由显存带宽决定的自回归理论上限。</li>
+    <li><b>EAGLE-3 (2025)</b>：在对话和推理模型上提速最高 6.5×。</li>
+  </ul>
+</section>
+
+<!-- ======================= CH8 ======================= -->
+<section class="chapter" id="ch8">
+  <div class="ch-num">第八章</div>
+  <h2 data-toc="家族谱系">家族谱系：草稿从哪里来？</h2>
+  <p>「起草 → 并行验证」这个框架对草稿的来源没有任何要求。草稿越准（$\alpha$ 大）、越便宜（$c$ 小）就越好。围绕这两个目标，几年间出现了大量变体：</p>
+
+  <div class="cards">
+    <div class="card"><div class="kind">独立草稿模型</div><h4>经典投机采样</h4>
+      <p>用同系列的小模型当草稿（Leviathan 2022；Chen 2023）。即插即用，无需训练。</p>
+      <p class="c-muted">要求：词表与分词器必须一致。缺点：要额外部署一个模型，分布对齐不够好时 α 偏低。DistillSpec 用知识蒸馏让草稿模型更贴近目标模型。</p></div>
+    <div class="card"><div class="kind">多头预测</div><h4>Medusa</h4>
+      <p>在大模型最后一层的隐藏状态上加 K 个额外的解码头，第 k 个头直接预测往后第 k+1 个 token，再用树形注意力一次验证多种组合。</p>
+      <p class="c-muted">Medusa-1（冻结主干）提速约 2.2×；Medusa-2（联合微调）提速 2.3～2.8×。</p></div>
+    <div class="card"><div class="kind">特征层自回归</div><h4>EAGLE 系列</h4>
+      <p>EAGLE 用一个单层 decoder 在大模型倒数第二层的特征上自回归，并输入「提前一步的 token」来消除采样带来的不确定性；EAGLE-2 利用草稿置信度近似接受率，动态构造草稿树；EAGLE-3 改为直接预测 token，并融合低、中、高层特征，配合 training-time test 训练。</p>
+      <p class="c-muted">EAGLE：LLaMA2-Chat 70B 上提速 2.7～3.5×。EAGLE-3：最高 6.5×。</p></div>
+    <div class="card"><div class="kind">多 token 预测</div><h4>MTP 模块</h4>
+      <p>DeepSeek-V3 在训练时加入了 MTP（multi-token prediction）模块，推理时可以直接拿来当草稿。</p>
+      <p class="c-muted">报告中第二个 token 的接受率为 85%～90%，生成速度（TPS）约为原来的 1.8 倍。</p></div>
+    <div class="card"><div class="kind">自投机</div><h4>跳层 / 早退</h4>
+      <p>用大模型<b>自己的一部分层</b>做草稿，比如跳过若干中间层（Draft &amp; Verify）或者在浅层提前退出（LayerSkip）。不需要额外参数，也不需要第二个模型。</p></div>
+    <div class="card"><div class="kind">无需模型</div><h4>Prompt Lookup / Lookahead</h4>
+      <p><b>Prompt Lookup Decoding</b>：在 prompt 中做 n-gram 字符串匹配，把匹配位置之后的 token 复制过来当草稿，适合摘要、文档问答、代码修改等「抄原文」的任务（约 2～4×）。<b>Lookahead Decoding</b>：用 Jacobi 迭代并行生成 n-gram 池，同样不需要草稿模型。</p></div>
+  </div>
+
+  <h3>树形验证：一次检查多种猜测</h3>
+  <p>单条草稿链有个弱点：第一个 token 一旦猜错，后面全部浪费。既然一次前向还有大量空闲算力，不妨<b>同时提出多条候选</b>。把它们合并成一棵前缀树，展平成一个序列送进大模型，再把注意力掩码改成「<b>每个节点只能看见自己的祖先</b>」，位置编码按节点在树中的深度设置。这样一次前向就能验证整棵树（SpecInfer、Medusa、EAGLE 都这样做）。</p>
+
+  <div class="widget no-math" id="tree">
+    <svg id="treeSvg" viewBox="0 0 760 300"></svg>
+  </div>
+  <p class="cap">把鼠标悬停在树的节点或掩码的某一行上：该节点能「看见」的正是它到根的路径。<br>6 个候选 token 只占一次前向，却包含了 4 条不同的续写路径。</p>
+  <p>验证时沿着树往下走，在每个节点决定接受哪个子节点。在采样（非贪心）设置下，要保持分布不变，需要把单草稿的修正拒绝采样推广到多个候选的情形（SpecInfer 给出了这样的多候选投机采样方法）。代价是每次前向处理的 token 变多，越接近计算受限，收益越递减。Medusa 的实验中，精心设计的 64 节点稀疏树，每步的加速率反而高于 256 节点的稠密树；而树太大时，实际速度会因为计算受限而下降。</p>
+</section>
+
+<!-- ======================= CH9 ======================= -->
+<section class="chapter" id="ch9">
+  <div class="ch-num">第九章</div>
+  <h2 data-toc="工程实践">工程实践中的要点</h2>
+  <ul>
+    <li><b>KV cache 回滚。</b>被拒绝位置及其后面的 KV 必须丢弃（通常只需截断长度指针，在 PagedAttention 中就是截断或释放对应的 block）。草稿模型的 KV cache 也要同步回滚。</li>
+    <li><b>Batch size 是最大的变量。</b>投机采样本质上是<b>用空闲算力换延迟</b>。batch 很大时，单次前向本来就接近计算受限，额外的 $\gamma$ 个位置不再免费，收益缩小，甚至可能拖慢吞吐。不过在长上下文场景下，读取 KV cache 会让解码重新变回访存受限，这时投机采样在大 batch 下也有收益（MagicDec）。EAGLE-3 在 SGLang 中 batch=64 时仍有约 1.38× 的吞吐提升。</li>
+    <li><b>词表必须一致。</b>否则 $p$ 和 $q$ 不在同一个空间里，无法逐 token 比较。</li>
+    <li><b>采样参数要一致。</b>$p$ 和 $q$ 都要使用经过同样 temperature/top-p 变换之后的分布。</li>
+    <li><b>选好 γ。</b>根据实测的 $\alpha$ 和 $c$ 选取，或者采用动态策略（按草稿置信度提前停止、动态树）。</li>
+    <li><b>看对指标。</b>「平均接受长度」（每轮产出的 token 数）高，不等于墙钟时间快，因为树越大，单次前向越慢。最终要看端到端的延迟和吞吐。</li>
+    <li><b>框架支持。</b>vLLM、SGLang、TensorRT-LLM、llama.cpp 都内置了投机解码；Hugging Face transformers 中可以用 <code>assistant_model</code>（草稿模型）或 <code>prompt_lookup_num_tokens</code>（Prompt Lookup）参数开启。</li>
+  </ul>
+  <div class="insight"><span class="tag">什么时候收益最大</span>
+    低 batch、对延迟敏感（交互式对话、代码补全）；输出可预测性高（代码、结构化输出、摘要、改写）；草稿与目标对齐得好（同源模型、蒸馏、EAGLE 类草稿头）。<br>
+    反过来，大 batch 的离线吞吐任务、草稿与目标差异很大、或者草稿不够便宜时，就要实测再决定。
+  </div>
+</section>
+
+<!-- ======================= QUIZ ======================= -->
+<section class="chapter" id="quiz">
+  <div class="ch-num">检验一下</div>
+  <h2 data-toc="小测验">小测验</h2>
+  <p>点选你认为正确的选项，答案和解释会随即显示。</p>
+  <div id="quizBox" class="no-math"></div>
+</section>
+
+<!-- ======================= SUMMARY ======================= -->
+<section class="chapter" id="sum">
+  <div class="ch-num">总结</div>
+  <h2 data-toc="总结与参考">一页纸总结</h2>
+  <div class="mental"><span class="tag">把整件事串起来</span>
+    <ol>
+      <li><b>动机：</b>小 batch 解码是访存受限的。一次前向处理 1 个 token 和处理几个 token 耗时几乎一样，大模型的时间按「次」计费。</li>
+      <li><b>机会：</b>生成必须串行，检查却可以并行。一次前向就能得到所有草稿位置上的分布。</li>
+      <li><b>流程：</b><span class="c-blue">小模型起草 γ 个</span> → <span class="c-yellow">大模型一次前向验证</span> → <span class="c-green">从左到右接受</span>，在第一个拒绝处<span class="c-red">用残差纠正</span>，全部通过则额外奖励 1 个。每轮产出 1 到 γ+1 个 token。</li>
+      <li><b>正确性：</b>以 $\min(1,p/q)$ 接受，被接受的概率质量恰好是 $\min(p,q)$；拒绝时从 $\max(0,p-q)$ 中重抽，恰好补满缺口，合起来正好是 $p$。接受率 $\beta = 1 - D_{\mathrm{TV}}(p,q)$，并且是最优的。</li>
+      <li><b>收益：</b>$\dfrac{1-\alpha^{\gamma+1}}{(1-\alpha)(\gamma c+1)}$。$\alpha$ 越大越好，$c$ 越小越好，$\gamma$ 有最优值。</li>
+    </ol>
+  </div>
+
+  <h3>参考资料</h3>
+  <ol class="refs">
+    <li>Y. Leviathan, M. Kalman, Y. Matias. <a href="https://arxiv.org/abs/2211.17192" target="_blank">Fast Inference from Transformers via Speculative Decoding</a>. ICML 2023.</li>
+    <li>C. Chen, S. Borgeaud, G. Irving, et al. <a href="https://arxiv.org/abs/2302.01318" target="_blank">Accelerating Large Language Model Decoding with Speculative Sampling</a>. arXiv 2023.</li>
+    <li>Google Research Blog. <a href="https://research.google/blog/looking-back-at-speculative-decoding/" target="_blank">Looking back at speculative decoding</a>. 2024.</li>
+    <li>H. Xia, Z. Yang, Q. Dong, et al. <a href="https://arxiv.org/abs/2401.07851" target="_blank">Unlocking Efficiency in Large Language Model Inference: A Comprehensive Survey of Speculative Decoding</a>. ACL Findings 2024.</li>
+    <li>T. Cai, Y. Li, Z. Geng, et al. <a href="https://arxiv.org/abs/2401.10774" target="_blank">Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads</a>. ICML 2024.</li>
+    <li>Y. Li, F. Wei, C. Zhang, H. Zhang. <a href="https://arxiv.org/abs/2401.15077" target="_blank">EAGLE</a> (ICML 2024) / <a href="https://arxiv.org/abs/2406.16858" target="_blank">EAGLE-2</a> (EMNLP 2024) / <a href="https://arxiv.org/abs/2503.01840" target="_blank">EAGLE-3</a> (NeurIPS 2025).</li>
+    <li>X. Miao, G. Oliaro, Z. Zhang, et al. <a href="https://arxiv.org/abs/2305.09781" target="_blank">SpecInfer: Accelerating Generative LLM Serving with Tree-based Speculative Inference and Verification</a>. ASPLOS 2024.</li>
+    <li>Y. Fu, P. Bailis, I. Stoica, H. Zhang. <a href="https://arxiv.org/abs/2402.02057" target="_blank">Break the Sequential Dependency of LLM Inference Using Lookahead Decoding</a>. ICML 2024.</li>
+    <li>A. Saxena. <a href="https://github.com/apoorvumang/prompt-lookup-decoding" target="_blank">Prompt Lookup Decoding</a>. GitHub, 2023.</li>
+    <li>DeepSeek-AI. <a href="https://arxiv.org/abs/2412.19437" target="_blank">DeepSeek-V3 Technical Report</a>. 2024（§2.2、§5.4.3 关于 MTP 与投机解码）.</li>
+    <li>Y. Zhou, K. Lyu, A. S. Rawat, et al. <a href="https://arxiv.org/abs/2310.08461" target="_blank">DistillSpec: Improving Speculative Decoding via Knowledge Distillation</a>. ICLR 2024.</li>
+    <li>J. Zhang, J. Wang, H. Li, et al. <a href="https://arxiv.org/abs/2309.08168" target="_blank">Draft &amp; Verify: Lossless Large Language Model Acceleration via Self-Speculative Decoding</a>. ACL 2024；M. Elhoushi et al. <a href="https://arxiv.org/abs/2404.16710" target="_blank">LayerSkip</a>. ACL 2024.</li>
+    <li>R. Sadhukhan, J. Chen, Z. Chen, et al. <a href="https://arxiv.org/abs/2408.11049" target="_blank">MagicDec: Breaking the Latency-Throughput Tradeoff for Long Context Generation with Speculative Decoding</a>. 2024.</li>
+  </ol>
+</section>
+
+<footer>以 3Blue1Brown 的可视化讲解风格致敬 · 所有交互动画均为原生 JavaScript + SVG 实现</footer>
+</article>
+
+<script>
+/* =========================================================
+   shared helpers
+   ========================================================= */
+const BLUE='#58C4DD', YELLOW='#F4D345', GREEN='#83C167', RED='#FC6255', GOLD='#F0AC5F', TEAL='#5CD0B3', GREY='#888';
+const NS='http://www.w3.org/2000/svg';
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>[...r.querySelectorAll(s)];
+function S(tag,attrs,parent){const e=document.createElementNS(NS,tag);if(attrs)for(const k in attrs)e.setAttribute(k,attrs[k]);if(parent)parent.appendChild(e);return e;}
+function H(tag,attrs,parent,html){const e=document.createElement(tag);if(attrs)for(const k in attrs){if(k==='class')e.className=attrs[k];else e.setAttribute(k,attrs[k]);}if(html!=null)e.innerHTML=html;if(parent)parent.appendChild(e);return e;}
+function T(tag,attrs,parent,text){const e=S(tag,attrs,parent);e.textContent=text;return e;}
+const smooth=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+function tween(ms,fn){return new Promise(res=>{const t0=performance.now();const f=now=>{const t=Math.min(1,(now-t0)/ms);fn(smooth(t),t);t<1?requestAnimationFrame(f):res();};requestAnimationFrame(f);});}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const clamp=(x,a,b)=>Math.max(a,Math.min(b,x));
+const f2=x=>x.toFixed(2);
+function hex2rgb(h){h=h.replace('#','');return[0,2,4].map(i=>parseInt(h.substr(i,2),16));}
+function lerpColor(a,b,t){const A=hex2rgb(a),B=hex2rgb(b);return `rgb(${A.map((v,i)=>Math.round(lerp(v,B[i],t))).join(',')})`;}
+function setR(r,x,y,w,h){r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',Math.max(0,w));r.setAttribute('height',Math.max(0,h));}
+function sampleCat(w){const s=w.reduce((a,b)=>a+b,0);let r=Math.random()*s;for(let i=0;i<w.length;i++){r-=w[i];if(r<=0&&w[i]>0)return i;}for(let i=w.length-1;i>=0;i--)if(w[i]>0)return i;return 0;}
+const SUB=['₀','₁','₂','₃','₄','₅','₆','₇','₈','₉'];
+function onVisible(el,fn){const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){io.disconnect();fn();}});},{threshold:.35});io.observe(el);}
+function arrowDefs(svg){const d=S('defs',{},svg);[['arrG','#999'],['arrY',YELLOW],['arrB',BLUE]].forEach(([id,c])=>{const m=S('marker',{id,viewBox:'0 0 10 10',refX:8,refY:5,markerWidth:7,markerHeight:7,orient:'auto-start-reverse'},d);S('path',{d:'M0,0 L10,5 L0,10 z',fill:c},m);});}
+
+/* =========================================================
+   scripted example (shared by hero race and stepper)
+   ========================================================= */
+const ROUNDS=[
+ {d:[{t:'投机',q:.82,p:.90,u:.37},{t:'采样',q:.91,p:.95,u:.12},{t:'的',q:.70,p:.55,u:.42},{t:'原理',q:.48,p:.12,u:.63}],fix:'核心'},
+ {d:[{t:'思想',q:.40,p:.62,u:.55},{t:'是',q:.88,p:.80,u:.35},{t:'用',q:.51,p:.66,u:.80},{t:'小',q:.57,p:.71,u:.26}],fix:'模型'},
+ {d:[{t:'来',q:.44,p:.09,u:.81},{t:'生成',q:.62,p:.30},{t:'草稿',q:.55,p:.21},{t:'，',q:.70,p:.48}],fix:'快速'},
+ {d:[{t:'起草',q:.39,p:.58,u:.66},{t:'，',q:.72,p:.64,u:.51},{t:'再',q:.61,p:.70,u:.09},{t:'用',q:.83,p:.86,u:.44}],fix:'大'},
+ {d:[{t:'模型',q:.93,p:.97,u:.71},{t:'来',q:.52,p:.20,u:.77},{t:'验证',q:.66,p:.47},{t:'。',q:.81,p:.62}],fix:'并行'},
+ {d:[{t:'验证',q:.86,p:.90,u:.30},{t:'。',q:.77,p:.83,u:.58},{t:'这',q:.35,p:.04,u:.58},{t:'种',q:.40,p:.33}],fix:'⟨eos⟩'},
+];
+function nAccepted(r){let k=0;for(const d of r.d){if(d.u!=null&&d.u<Math.min(1,d.p/d.q))k++;else break;}return k;}
+const FINAL=[];ROUNDS.forEach(r=>{const k=nAccepted(r);r.d.slice(0,k).forEach(d=>FINAL.push(d.t));FINAL.push(r.fix);});
+
+/* =========================================================
+   progress bar + toc
+   ========================================================= */
+(function(){
+  const bar=$('#progress');
+  addEventListener('scroll',()=>{const h=document.documentElement;bar.style.width=(h.scrollTop/(h.scrollHeight-h.clientHeight)*100)+'%';},{passive:true});
+  const toc=$('#toc');const links=[];
+  $$('h2[data-toc]').forEach(h=>{const sec=h.closest('section');const a=H('a',{href:'#'+sec.id},toc,h.dataset.toc);links.push([sec,a]);});
+  const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){links.forEach(([s,a])=>a.classList.toggle('active',s===e.target));}});},{rootMargin:'-45% 0px -50% 0px'});
+  links.forEach(([s])=>io.observe(s));
+})();
+
+/* =========================================================
+   HERO: race
+   ========================================================= */
+(function(){
+  const TGT=380, DRF=45, TOTAL=FINAL.length*TGT*1.03;
+  const mk=id=>{const r=$('#'+id);return{text:$('.lane-text',r),track:$('.lane-track',r),t:$('.t',r),n:$('.n',r),m:$('.m',r)};};
+  const A=mk('laneA'),B=mk('laneB');const badge=$('#raceBadge');
+  let run=0;
+  function block(L,kind,start,dur){const b=H('div',{class:'blk '+kind},L.track);b.style.left=(start/TOTAL*100)+'%';b.style.width='0';b.style.transition=`width ${dur}ms linear`;requestAnimationFrame(()=>requestAnimationFrame(()=>{b.style.width=(dur/TOTAL*100)+'%';}));}
+  function tok(L,text,cls,before){const s=H('span',{class:'tk pop '+cls+(text==='⟨eos⟩'?' eos':'')});s.textContent=text;L.text.insertBefore(s,before||null);return s;}
+  function timer(L,t0,id,doneRef){const f=()=>{if(id!==run)return;L.t.textContent=((performance.now()-t0)/1000).toFixed(2);if(!doneRef.done)requestAnimationFrame(f);};requestAnimationFrame(f);}
+  async function laneA(id){const t0=performance.now();const ref={done:false};timer(A,t0,id,ref);let tt=0,n=0;
+    for(const w of FINAL){block(A,'target',tt,TGT);await sleep(TGT);if(id!==run)return;tt+=TGT;n++;A.n.textContent=n;tok(A,w,'');}
+    ref.done=true;A.t.textContent=((performance.now()-t0)/1000).toFixed(2);return performance.now()-t0;}
+  async function laneB(id){const t0=performance.now();const ref={done:false};timer(B,t0,id,ref);let tt=0,n=0,m=0;
+    for(const r of ROUNDS){const spans=[];
+      for(const d of r.d){block(B,'draft',tt,DRF);await sleep(DRF);if(id!==run)return;tt+=DRF;m++;B.m.textContent=m;spans.push(tok(B,d.t,'ghost'));}
+      block(B,'target',tt,TGT);await sleep(TGT);if(id!==run)return;tt+=TGT;n++;B.n.textContent=n;
+      const k=nAccepted(r);
+      spans.forEach((s,i)=>{s.classList.remove('ghost','pop');s.classList.add(i<k?'acc':(i===k?'rej':'void'));});
+      tok(B,r.fix,'fix',spans[k]||null);
+      setTimeout(()=>{spans.forEach((s,i)=>{if(i<k)s.classList.remove('acc');});},600);
+      setTimeout(()=>{spans.slice(k).forEach(s=>s.classList.add('gone'));},550);
+      setTimeout(()=>{spans.slice(k).forEach(s=>s.remove());},950);
+    }
+    ref.done=true;B.t.textContent=((performance.now()-t0)/1000).toFixed(2);return performance.now()-t0;}
+  async function play(){const id=++run;[A,B].forEach(L=>{L.text.innerHTML='';L.track.innerHTML='';L.t.textContent='0.00';L.n.textContent='0';if(L.m)L.m.textContent='0';});badge.classList.remove('show');
+    const [ta,tb]=await Promise.all([laneA(id),laneB(id)]);if(id!==run||!ta||!tb)return;
+    badge.textContent=`同样 ${FINAL.length} 个 token：大模型调用 ${FINAL.length} 次 → ${ROUNDS.length} 次，墙钟时间快 ${(ta/tb).toFixed(1)} 倍`;badge.classList.add('show');}
+  $('#raceBtn').onclick=play;
+  onVisible($('#race'),play);
+})();
+
+/* =========================================================
+   CH1: roofline
+   ========================================================= */
+(function(){
+  const svg=$('#roofSvg');const L=70,R=24,Tp=20,B=52,W=760,Hh=330,pw=W-L-R,ph=Hh-Tp-B;
+  const MEM=41.8,CMP=0.1416,YMAX=160,KSTAR=MEM/CMP;
+  const xs=k=>L+Math.log2(k)/10*pw, ys=t=>Tp+ph-(t/YMAX)*ph;
+  S('rect',{x:xs(1),y:Tp,width:xs(KSTAR)-xs(1),height:ph,fill:BLUE,'fill-opacity':.05},svg);
+  S('rect',{x:xs(KSTAR),y:Tp,width:xs(1024)-xs(KSTAR),height:ph,fill:RED,'fill-opacity':.06},svg);
+  T('text',{x:(xs(1)+xs(KSTAR))/2,y:Tp+18,'text-anchor':'middle',class:'svg-small',fill:BLUE},svg,'访存受限区：多算几个 token 几乎免费');
+  T('text',{x:(xs(KSTAR)+xs(1024))/2,y:Tp+18,'text-anchor':'middle',class:'svg-small',fill:RED},svg,'计算受限区');
+  for(let e=0;e<=10;e++){const x=xs(2**e);S('line',{x1:x,y1:Tp,x2:x,y2:Tp+ph,stroke:'#2a2d33'},svg);T('text',{x,y:Tp+ph+18,'text-anchor':'middle',class:'svg-axis'},svg,String(2**e));}
+  for(let t=0;t<=YMAX;t+=40){const y=ys(t);S('line',{x1:L,y1:y,x2:L+pw,y2:y,stroke:'#2a2d33'},svg);T('text',{x:L-8,y:y+4,'text-anchor':'end',class:'svg-axis'},svg,t+'');}
+  T('text',{x:L+pw/2,y:Hh-8,'text-anchor':'middle',class:'svg-title'},svg,'一次前向同时处理的 token 数 k（对数刻度）');
+  T('text',{x:16,y:Tp+ph/2,'text-anchor':'middle',class:'svg-title',transform:`rotate(-90 16 ${Tp+ph/2})`},svg,'耗时 (ms)');
+  S('line',{x1:xs(1),y1:ys(MEM),x2:xs(1024),y2:ys(MEM),stroke:BLUE,'stroke-dasharray':'6 5','stroke-width':1.5},svg);
+  T('text',{x:xs(1)+6,y:ys(MEM)-8,class:'svg-small',fill:BLUE},svg,'读一遍权重 ≈ 41.8 ms');
+  let d='',dt='';for(let i=0;i<=200;i++){const k=2**(i/20);const x=xs(k);d+=(i?'L':'M')+x+','+ys(Math.min(YMAX,k*CMP));dt+=(i?'L':'M')+x+','+ys(Math.min(YMAX,Math.max(MEM,k*CMP)));}
+  S('path',{d,fill:'none',stroke:RED,'stroke-dasharray':'6 5','stroke-width':1.5},svg);
+  T('text',{x:xs(600),y:ys(600*CMP)+18,class:'svg-small',fill:RED,'text-anchor':'end'},svg,'纯计算时间 k × 0.14 ms');
+  S('path',{d:dt,fill:'none',stroke:YELLOW,'stroke-width':3.5},svg);
+  const guide=S('line',{stroke:'#fff','stroke-opacity':.3,'stroke-dasharray':'3 4'},svg);
+  const dot=S('circle',{r:7,fill:YELLOW,stroke:'#111','stroke-width':2},svg);
+  const lab=T('text',{class:'svg-small',fill:'#fff'},svg,'');
+  const sl=$('#roofK');
+  function upd(k){const t=Math.max(MEM,k*CMP);const x=xs(k),y=ys(Math.min(t,YMAX));
+    dot.setAttribute('cx',x);dot.setAttribute('cy',y);guide.setAttribute('x1',x);guide.setAttribute('x2',x);guide.setAttribute('y1',Tp);guide.setAttribute('y2',Tp+ph);
+    lab.setAttribute('x',x+(k>200?-10:10));lab.setAttribute('y',y-12);lab.setAttribute('text-anchor',k>200?'end':'start');lab.textContent=`k=${k}: ${t.toFixed(1)} ms`;
+    $('#roofKv').textContent=k;$('#roofT').textContent=t.toFixed(1)+' ms';$('#roofPer').textContent=(t/k<1?(t/k).toFixed(3):(t/k).toFixed(1))+' ms';
+    const u=k*CMP/t;$('#roofU').textContent=(u*100).toFixed(u<.1?1:0)+'%';$('#roofUb').style.width=(u*100)+'%';}
+  sl.oninput=()=>upd(Math.round(2**(+sl.value)));
+  $$('#roof [data-k]').forEach(b=>b.onclick=()=>{const k=+b.dataset.k;sl.value=Math.log2(k);upd(k);});
+  upd(1);
+})();
+
+/* =========================================================
+   CH2: parallel verification
+   ========================================================= */
+(function(){
+  const svg=$('#parSvg');arrowDefs(svg);
+  const xs=[240,340,440,540,640], toks=['的','核心','思想','是','用'], serialToks=['的','核心','思想','是','用'];
+  const IY=305,BH=38,BW=80, MY0=150,MY1=222;
+  S('rect',{x:40,y:IY-BH/2,width:150,height:BH,rx:7,fill:'#1d1f24',stroke:'#555','stroke-dasharray':'4 3'},svg);
+  T('text',{x:115,y:IY+6,'text-anchor':'middle',class:'svg-tok',fill:'#999'},svg,'投机 采样');
+  T('text',{x:115,y:IY+38,'text-anchor':'middle',class:'svg-small'},svg,'KV cache（已缓存的前缀）');
+  const model=S('rect',{x:200,y:MY0,width:490,height:MY1-MY0,rx:12,fill:'#26230f',stroke:YELLOW,'stroke-width':2},svg);
+  T('text',{x:445,y:(MY0+MY1)/2+7,'text-anchor':'middle',class:'svg-lab',fill:YELLOW},svg,'目标模型 Mp');
+  const ups=xs.map(x=>S('line',{x1:x,y1:IY-BH/2-2,x2:x,y2:MY1+4,stroke:'#999','stroke-width':1.6,'marker-end':'url(#arrG)'},svg));
+  const outs=xs.map(x=>S('line',{x1:x,y1:MY0-2,x2:x,y2:112,stroke:YELLOW,'stroke-width':1.6,'marker-end':'url(#arrY)'},svg));
+  [...ups,...outs].forEach(l=>{const len=Math.abs(+l.getAttribute('y2')-+l.getAttribute('y1'));l.dataset.len=len;l.setAttribute('stroke-dasharray',len);l.setAttribute('stroke-dashoffset',len);});
+  const GLY=[[.15,.62,.1,.08,.05],[.1,.07,.7,.08,.05],[.05,.75,.1,.06,.04],[.2,.1,.6,.05,.05],[.12,.08,.06,.66,.08]];
+  const caps=['检验「核心」','检验「思想」','检验「是」','检验「用」','奖励位'];
+  const glyphs=xs.map((x,i)=>{const g=S('g',{opacity:0},svg);GLY[i].forEach((v,k)=>S('rect',{x:x-31+k*13,y:100-v*60,width:10,height:v*60,fill:YELLOW,'fill-opacity':.85},g));
+    S('line',{x1:x-34,y1:100,x2:x+34,y2:100,stroke:'#666'},g);T('text',{x,y:26,'text-anchor':'middle',class:'svg-small',fill:YELLOW,'font-size':14},g,'p'+SUB[i+1]);
+    const c=T('text',{x,y:126,'text-anchor':'middle',class:'svg-small'},g,caps[i]);g.cap=c;return g;});
+  const inputs=xs.map((x,i)=>{const g=S('g',{},svg);const r=S('rect',{x:x-BW/2,y:IY-BH/2,width:BW,height:BH,rx:7,fill:'#1b2329','stroke-width':1.6},g);const t=T('text',{x,y:IY+6,'text-anchor':'middle',class:'svg-tok'},g,toks[i]);return{g,r,t};});
+  const cnt=$('#parCnt');let run=0;
+  function draw(l,t){l.setAttribute('stroke-dashoffset',(+l.dataset.len)*(1-t));}
+  function reset(mode){run++;[...ups,...outs].forEach(l=>draw(l,0));glyphs.forEach((g,i)=>{g.setAttribute('opacity',0);g.cap.textContent=mode==='serial'?(i<4?`→ 生成「${serialToks[i+1]}」`:'→ 生成下一个'):caps[i];});
+    inputs.forEach((o,i)=>{const isD=i>0;o.g.setAttribute('opacity',mode==='serial'&&isD?0:1);
+      o.r.setAttribute('stroke',i===0?'#bbb':(mode==='serial'?YELLOW:BLUE));o.t.setAttribute('fill',i===0?'#eee':(mode==='serial'?YELLOW:BLUE));});
+    model.setAttribute('fill','#26230f');}
+  async function flash(){await tween(220,t=>model.setAttribute('fill',lerpColor('#26230f','#6b5c12',t)));await tween(300,t=>model.setAttribute('fill',lerpColor('#6b5c12','#26230f',t)));}
+  async function serial(){reset('serial');const id=run;$('#parSerial').classList.add('on');$('#parPar').classList.remove('on');
+    for(let i=0;i<5;i++){cnt.textContent=`目标模型前向：${i+1} 次`;await tween(380,t=>draw(ups[i],t));if(id!==run)return;await flash();if(id!==run)return;
+      await tween(320,t=>{draw(outs[i],t);glyphs[i].setAttribute('opacity',t);});if(id!==run)return;
+      if(i<4){const o=inputs[i+1];await tween(300,t=>o.g.setAttribute('opacity',t));}if(id!==run)return;await sleep(150);}
+    cnt.textContent='串行完成：5 次前向，每次都要等上一次的结果';}
+  async function par(){reset('par');const id=run;$('#parPar').classList.add('on');$('#parSerial').classList.remove('on');cnt.textContent='目标模型前向：1 次';
+    await sleep(250);if(id!==run)return;await tween(600,t=>ups.forEach(l=>draw(l,t)));if(id!==run)return;await flash();if(id!==run)return;
+    await tween(600,t=>{outs.forEach(l=>draw(l,t));glyphs.forEach(g=>g.setAttribute('opacity',t));});if(id!==run)return;
+    cnt.textContent='并行完成：1 次前向就得到 5 个位置的分布';}
+  $('#parSerial').onclick=serial;$('#parPar').onclick=par;reset('par');
+  onVisible($('#par'),par);
+
+  // causal mask
+  const m=$('#maskSvg');const rows=['的','核心','思想','是','用'],cols=['缓存','的','核心','思想','是','用'];const C=34,X0=150,Y0=50;
+  cols.forEach((c,j)=>T('text',{x:X0+j*C+C/2,y:Y0-12,'text-anchor':'middle',class:'svg-small','font-size':13,fill:j===0?'#888':(j===1?'#ddd':BLUE)},m,c));
+  rows.forEach((r,i)=>{T('text',{x:X0-12,y:Y0+i*C+C/2+5,'text-anchor':'end',class:'svg-small','font-size':13,fill:i===0?'#ddd':BLUE},m,r);
+    cols.forEach((c,j)=>{const vis=j===0||j-1<=i;S('rect',{x:X0+j*C+2,y:Y0+i*C+2,width:C-4,height:C-4,rx:4,fill:vis?YELLOW:'#24272d','fill-opacity':vis?(j===0?.35:.75):1},m);});
+    T('text',{x:X0+cols.length*C+14,y:Y0+i*C+C/2+5,class:'svg-small','font-size':13,fill:YELLOW},m,'→ p'+SUB[i+1]);});
+  T('text',{x:X0-12,y:Y0-12,'text-anchor':'end',class:'svg-small'},m,'查询 ↓ / 键 →');
+})();
+
+/* =========================================================
+   CH3: stepper
+   ========================================================= */
+(function(){
+  const out=$('#sdText'),narrEl=$('#sdNarr'),slotsEl=$('#sdSlots'),phEls=$$('#sdPhases span:not(.round)'),roundEl=$('#sdRound');
+  const nextB=$('#sdNext'),autoB=$('#sdAuto');
+  let R=0,ph=0,busy=false,auto=false,dC=0,tC=0,nT=0,k=0,run=0;
+  const slots=[];for(let i=0;i<5;i++){const s=H('div',{class:'slot'},slotsEl);
+    s.innerHTML=`<div class="idx"></div><div class="tok"></div><div class="row rq"></div><div class="row rp"></div><div class="row ra"></div><div class="meter"><div class="fill"></div><div class="u"></div></div><div class="verdict"></div>`;slots.push(s);}
+  const g=(s,c)=>s.querySelector(c);
+  const narr=h=>{narrEl.innerHTML=h;};
+  function counters(){$('#sdT').textContent=tC;$('#sdD').textContent=dC;$('#sdN').textContent=nT;roundEl.textContent=`第 ${Math.min(R+1,ROUNDS.length)} / ${ROUNDS.length} 轮`;phEls.forEach((e,i)=>e.classList.toggle('cur',i===ph&&R<ROUNDS.length));}
+  function clearSlots(){slots.forEach((s,i)=>{s.className='slot'+(i===4?' extra':'');g(s,'.idx').textContent=i<4?`草稿 ${i+1}`:'第 γ+1 个位置';g(s,'.tok').textContent='';
+    ['.rq','.rp','.ra'].forEach(c=>{const r=g(s,c);r.textContent='';r.classList.remove('show');});g(s,'.meter').style.opacity=0;g(s,'.u').style.left='0';g(s,'.verdict').textContent='';});}
+  async function pDraft(id){clearSlots();const r=ROUNDS[R];
+    narr(`<b>第 ${R+1} 轮 · ① 起草</b>：<span class="c-blue">草稿模型 M<sub>q</sub></span> 自回归地连猜 4 个 token。每个都只要小模型做一次前向，很便宜。蓝色的 q 是草稿模型给自己所猜 token 的概率。`);
+    for(let i=0;i<4;i++){await sleep(380);if(id!==run)return;const d=r.d[i],s=slots[i];g(s,'.tok').textContent=d.t;s.classList.remove('pop');void s.offsetWidth;s.classList.add('pop');
+      const rq=g(s,'.rq');rq.textContent=`q = ${f2(d.q)}`;rq.classList.add('show');dC++;counters();}}
+  async function pVerify(id){const r=ROUNDS[R];
+    narr(`<b>② 并行验证</b>：把「已确定的文本 + 4 个草稿」<b>一次性</b>送进<span class="c-yellow">目标模型 M<sub>p</sub></span>。只做一次前向，就同时得到 5 个位置上的分布 p₁…p₅。黄色的 p 是目标模型给同一个草稿 token 的概率；p₅ 留给第 5 个位置备用。`);
+    await sleep(300);if(id!==run)return;tC++;counters();
+    slots.forEach((s,i)=>{s.classList.add('flash');if(i<4){const rp=g(s,'.rp');rp.textContent=`p = ${f2(r.d[i].p)}`;rp.classList.add('show');}
+      else{g(s,'.tok').textContent='p₅';const rp=g(s,'.rp');rp.textContent='已算好，备用';rp.classList.add('show');}});
+    await sleep(700);slots.forEach(s=>s.classList.remove('flash'));}
+  async function pCheck(id){const r=ROUNDS[R];k=0;
+    narr(`<b>③ 逐个检验</b>：从左到右，对每个草稿抽一个 u ~ U(0,1)，若 u &lt; min(1, p/q) 就接受。p ≥ q 时接受概率为 1，必定接受；p &lt; q 时只以 p/q 的概率接受。`);
+    for(let i=0;i<4;i++){const d=r.d[i],s=slots[i];const a=Math.min(1,d.p/d.q);
+      await sleep(250);if(id!==run)return;
+      const ra=g(s,'.ra');ra.textContent=d.p>=d.q?'p ≥ q → 接受率 1':`min(1,p/q) = ${f2(a)}`;ra.classList.add('show');
+      const me=g(s,'.meter');me.style.opacity=1;g(me,'.fill').style.width=(a*100)+'%';const um=g(me,'.u');
+      await tween(520,t=>{um.style.left=(d.u*t*100)+'%';});if(id!==run)return;
+      if(d.u<a){s.classList.add('acc');g(s,'.verdict').textContent=`✓ 接受 (u=${f2(d.u)})`;k++;}
+      else{s.classList.add('rej');g(s,'.verdict').textContent=`✗ 拒绝 (u=${f2(d.u)})`;
+        await sleep(300);for(let j=i+1;j<4;j++){slots[j].classList.add('void');g(slots[j],'.verdict').textContent='作废';}
+        narr(`<b>③ 逐个检验</b>：前 ${i} 个草稿被接受，第 ${i+1} 个「${d.t}」被拒绝。目标模型认为它的概率只有 ${f2(d.p)}，草稿模型却给了 ${f2(d.q)}，高估太多。${i<3?'它后面的草稿是在错误前缀上生成的，全部作废。':''}`);
+        break;}}
+    if(k===4)narr(`<b>③ 逐个检验</b>：4 个草稿<b class="c-green">全部通过</b>！`);}
+  async function pFinal(id){const r=ROUNDS[R],s=slots[4];
+    s.classList.remove('extra');s.classList.add('fixed');
+    if(k<4){g(s,'.idx').textContent='纠正 token';g(s,'.rq').textContent='';g(s,'.rp').textContent=`来自 norm(max(0,p${SUB[k+1]}−q${SUB[k+1]}))`;
+      narr(`<b>④ 纠正</b>：在被拒绝的第 ${k+1} 个位置，从<b>残差分布</b> norm(max(0, p${SUB[k+1]} − q${SUB[k+1]})) 中重新采样，得到「<span class="c-yellow">${r.fix}</span>」。这一步不需要额外的前向，p${SUB[k+1]} 已经算好了。本轮产出 ${k} + 1 = <b>${k+1}</b> 个 token。`);}
+    else{g(s,'.idx').textContent='奖励 token';g(s,'.rp').textContent='直接从 p₅ 采样';
+      narr(`<b>④ 奖励</b>：既然 4 个草稿都被接受，p₅ 就是在<b>完全正确</b>的前缀下算出来的，直接从中采样，免费多得一个 token「<span class="c-yellow">${r.fix}</span>」。本轮产出 4 + 1 = <b>5</b> 个 token。`);}
+    g(s,'.tok').textContent=r.fix;s.classList.remove('pop');void s.offsetWidth;s.classList.add('pop');
+    await sleep(600);if(id!==run)return;
+    r.d.slice(0,k).forEach(d=>H('span',{class:'ok tk pop'},out,d.t));H('span',{class:'fx tk pop'+(r.fix==='⟨eos⟩'?' eos':'')},out,r.fix);
+    nT+=k+1;R++;counters();
+    if(R>=ROUNDS.length){await sleep(500);narr(`<b>完成！</b>目标模型只调用了 <b class="c-yellow">${tC}</b> 次，就生成了 <b>${nT}</b> 个 token（含结束符 ⟨eos⟩），普通解码需要 ${nT} 次。小模型调用了 ${dC} 次，但它便宜得多。平均每次大模型调用产出 ${(nT/tC).toFixed(2)} 个 token。`);}}
+  const phases=[pDraft,pVerify,pCheck,pFinal];
+  function btns(){nextB.disabled=busy||R>=ROUNDS.length;autoB.textContent=auto?'❚❚ 暂停':'▶ 自动播放';autoB.disabled=R>=ROUNDS.length;}
+  async function next(){if(busy||R>=ROUNDS.length)return;busy=true;btns();const id=run;await phases[ph](id);if(id!==run)return;ph=(ph+1)%4;busy=false;counters();btns();
+    if(auto&&R<ROUNDS.length){await sleep(900);if(id===run&&auto)next();}else if(R>=ROUNDS.length){auto=false;btns();}}
+  function reset(){run++;R=0;ph=0;busy=false;auto=false;dC=tC=nT=0;out.innerHTML='';clearSlots();counters();btns();
+    narr('我们要生成：「投机采样的核心思想是用小模型快速起草，再用大模型并行验证。」点击 <b>下一步</b> 开始第 1 轮。');}
+  nextB.onclick=next;$('#sdReset').onclick=reset;autoB.onclick=()=>{auto=!auto;btns();if(auto&&!busy)next();};
+  reset();
+})();
+
+/* =========================================================
+   shared distribution (CH4 + CH5)
+   ========================================================= */
+const DIST={labels:['好','热','冷','晴朗','糟'],q:[.50,.15,.10,.20,.05],p:[.35,.30,.15,.10,.10],ls:[]};
+const PRESETS={default:{q:[.50,.15,.10,.20,.05],p:[.35,.30,.15,.10,.10]},close:{q:[.38,.27,.14,.11,.10],p:[.35,.30,.15,.10,.10]},
+  far:{q:[.06,.05,.09,.70,.10],p:[.35,.30,.15,.10,.10]},same:{q:[.35,.30,.15,.10,.10],p:[.35,.30,.15,.10,.10]}};
+function randDist(){const a=DIST.labels.map(()=>Math.pow(Math.random(),1.6)+.02);const s=a.reduce((x,y)=>x+y,0);return a.map(x=>x/s);}
+function distChanged(src){DIST.ls.forEach(f=>f(src));}
+const betaOf=()=>DIST.p.reduce((s,p,i)=>s+Math.min(p,DIST.q[i]),0);
+
+/* =========================================================
+   CH4: geometry of modified rejection sampling
+   ========================================================= */
+(function(){
+  const svg=$('#geoSvg'),info=$('#geoInfo');const n=5,X0=60,CW=108,BW=62,BASE=336,CH=286,POOLX=652,POOLW=58;
+  const cx=i=>X0+CW*i+CW/2;
+  let stage=1,hover=0,mode='q',drag=null,frozen=null,anim=false;
+  const gridG=S('g',{},svg);
+  S('line',{x1:X0-12,y1:BASE,x2:X0+CW*n,y2:BASE,stroke:'#666'},svg);
+  const cols=[];
+  for(let i=0;i<n;i++){const g=S('g',{},svg);
+    const c={hl:S('rect',{x:X0+CW*i+4,y:24,width:CW-8,height:BASE-24,rx:8,fill:'#fff','fill-opacity':0},g),
+      qFill:S('rect',{fill:BLUE,'fill-opacity':.3},g),green:S('rect',{fill:GREEN,'fill-opacity':.75},g),red:S('rect',{fill:RED,'fill-opacity':.8},g),
+      gap:S('rect',{fill:YELLOW,'fill-opacity':.07,stroke:YELLOW,'stroke-dasharray':'5 4','stroke-width':1.3},g),gold:S('rect',{fill:GOLD,'fill-opacity':.85},g),
+      qLine:S('rect',{fill:'none',stroke:BLUE,'stroke-width':2},g),pLine:S('rect',{fill:'none',stroke:YELLOW,'stroke-width':2.6},g),
+      lab:T('text',{x:cx(i),y:BASE+28,'text-anchor':'middle',class:'svg-lab'},g,DIST.labels[i]),val:S('text',{x:cx(i),'text-anchor':'middle','font-size':12,'font-family':'ui-monospace,Menlo,monospace'},g)};
+    c.vq=S('tspan',{fill:BLUE},c.val);c.vsp=S('tspan',{},c.val);c.vsp.textContent='  ';c.vp=S('tspan',{fill:YELLOW},c.val);cols.push(c);}
+  const poolBox=S('rect',{x:POOLX,y:BASE-10,width:POOLW,height:10,fill:'none',stroke:'#555','stroke-dasharray':'3 3',opacity:0},svg);
+  const poolTxt=T('text',{x:POOLX+POOLW/2,y:BASE+28,'text-anchor':'middle',class:'svg-small',opacity:0},svg,'拒绝概率');
+  const poolTxt2=T('text',{x:POOLX+POOLW/2,'text-anchor':'middle',class:'svg-small',fill:RED,opacity:0},svg,'');
+  const banner=T('text',{x:X0,y:16,class:'svg-small',fill:'#ccc','font-size':13},svg,'');
+  const ymax=()=>frozen??Math.max(.4,...DIST.p,...DIST.q)*1.13;
+  const show=(el,on)=>el.style.display=on?'':'none';
+  function render(){const Y=ymax(),sc=v=>v/Y*CH;
+    gridG.innerHTML='';const step=Y>.75?.2:.1;for(let v=0;v<=Y+1e-9;v+=step){const y=BASE-sc(v);S('line',{x1:X0-12,y1:y,x2:X0+CW*n,y2:y,stroke:'#25282e'},gridG);T('text',{x:X0-18,y:y+4,'text-anchor':'end',class:'svg-axis'},gridG,v.toFixed(1));}
+    for(let i=0;i<n;i++){const c=cols[i],q=DIST.q[i],p=DIST.p[i],m=Math.min(p,q),r=Math.max(0,q-p),gp=Math.max(0,p-q),x=cx(i)-BW/2;
+      setR(c.qFill,x,BASE-sc(q),BW,sc(q));setR(c.green,x,BASE-sc(m),BW,sc(m));setR(c.red,x,BASE-sc(q),BW,sc(r));
+      setR(c.gap,x,BASE-sc(p),BW,sc(gp));setR(c.gold,x,BASE-sc(p),BW,sc(gp));setR(c.qLine,x,BASE-sc(q),BW,sc(q));setR(c.pLine,x,BASE-sc(p),BW,sc(p));
+      show(c.qFill,stage===1);show(c.green,stage>=2);show(c.red,stage===2&&!c.redHidden);show(c.gap,stage===2);show(c.gold,stage===3);show(c.qLine,stage<=2);
+      c.qLine.setAttribute('stroke-opacity',stage===2?.5:1);
+      c.val.setAttribute('y',BASE-sc(Math.max(p,q))-9);c.vq.textContent='q '+f2(q).slice(1);c.vp.textContent='p '+f2(p).slice(1);
+      c.hl.setAttribute('fill-opacity',i===hover?.035:0);}
+    const b=betaOf();
+    banner.textContent=stage===1?'蓝色柱 = 草稿分布 q，黄色框 = 目标分布 p。在蓝色区域均匀撒点 ⇔ 抽草稿 x̃ ~ q 再抽 u。':
+      stage===2?`绿色 = 落在 p 以下被接受（总量 β = ${f2(b)}）；红色 = 被拒绝（总量 1−β = ${f2(1-b)}）；虚线 = 缺口（总量也是 ${f2(1-b)}）`:
+      '红色被拒绝的概率全部补进了缺口：每一列的总高度正好等于 p(x)！';
+    poolBox.setAttribute('opacity',0);poolTxt.setAttribute('opacity',0);poolTxt2.setAttribute('opacity',0);
+    infoUpd();}
+  function infoUpd(){const i=hover,q=DIST.q[i],p=DIST.p[i],a=Math.min(1,p/q),m=Math.min(p,q),gp=Math.max(0,p-q),b=betaOf();
+    const tv=DIST.p.reduce((s,pp,j)=>s+Math.abs(pp-DIST.q[j]),0)/2;
+    info.innerHTML=`<div class="ih">x = 「${DIST.labels[i]}」<span class="c-muted" style="font-size:12px">（悬停可切换列）</span></div>
+      <div class="mono"><span class="c-blue">q(x) = ${f2(q)}</span>　<span class="c-yellow">p(x) = ${f2(p)}</span></div>
+      <div>接受概率 min(1, p/q) = <b>${f2(a)}</b></div>
+      <div class="c-green">① 抽到 x 且被接受<br>　q · min(1,p/q) = min(p,q) = <b>${f2(m)}</b></div>
+      <div class="c-gold">② 被拒绝后重抽到 x<br>　(1−β) · p′(x) = max(0, p−q) = <b>${f2(gp)}</b></div>
+      <div class="sum">① + ② = ${f2(m+gp)} = p(x) ✓</div>
+      <div class="stats">接受率 β = Σ min(p,q) = <b style="color:var(--green)">${f2(b)}</b><br>拒绝率 1 − β = ${f2(1-b)}<br>TV(p, q) = ${f2(tv)} = 1 − β</div>`;}
+  async function flow(){if(anim)return;anim=true;stage=2;cols.forEach(c=>c.redHidden=false);render();
+    const Y=ymax(),sc=v=>v/Y*CH,b=betaOf();
+    banner.textContent='把所有被拒绝的概率（红色）收集起来……';
+    poolBox.setAttribute('opacity',1);setR(poolBox,POOLX,BASE-sc(1-b),POOLW,sc(1-b));poolTxt.setAttribute('opacity',1);
+    const mv=[];let acc=0;
+    for(let i=0;i<n;i++){const q=DIST.q[i],p=DIST.p[i],r=Math.max(0,q-p);if(r<1e-6)continue;
+      const el=S('rect',{fill:RED,'fill-opacity':.8},svg);const fr={x:cx(i)-BW/2,y:BASE-sc(q),w:BW,h:sc(r)},to={x:POOLX,y:BASE-sc(acc+r),w:POOLW,h:sc(r)};acc+=r;
+      setR(el,fr.x,fr.y,fr.w,fr.h);mv.push({el,fr,to});cols[i].redHidden=true;show(cols[i].red,false);}
+    await tween(1100,t=>mv.forEach(o=>setR(o.el,lerp(o.fr.x,o.to.x,t),lerp(o.fr.y,o.to.y,t),lerp(o.fr.w,o.to.w,t),lerp(o.fr.h,o.to.h,t))));
+    poolTxt2.setAttribute('y',BASE-sc(1-b)-8);poolTxt2.textContent='1−β = '+f2(1-b);poolTxt2.setAttribute('opacity',1);
+    banner.textContent=`共 ${f2(1-b)}。现在按「缺口」的形状把它分出去，这就是残差分布 p′ ∝ max(0, p−q)……`;
+    await sleep(900);mv.forEach(o=>o.el.remove());
+    const ch=[];let off=0;
+    for(let j=0;j<n;j++){const q=DIST.q[j],p=DIST.p[j],gp=Math.max(0,p-q);if(gp<1e-6)continue;
+      const el=S('rect',{fill:RED,'fill-opacity':.85},svg);const fr={x:POOLX,y:BASE-sc(off+gp),w:POOLW,h:sc(gp)},to={x:cx(j)-BW/2,y:BASE-sc(p),w:BW,h:sc(gp)};off+=gp;
+      setR(el,fr.x,fr.y,fr.w,fr.h);ch.push({el,fr,to});}
+    await tween(1200,t=>ch.forEach(o=>{setR(o.el,lerp(o.fr.x,o.to.x,t),lerp(o.fr.y,o.to.y,t)-Math.sin(t*Math.PI)*40,lerp(o.fr.w,o.to.w,t),lerp(o.fr.h,o.to.h,t));o.el.setAttribute('fill',lerpColor(RED,GOLD,t));}));
+    ch.forEach(o=>o.el.remove());stage=3;cols.forEach(c=>c.redHidden=false);anim=false;render();}
+  function setStage(s){if(anim)return;$$('#geoStages button').forEach(b=>b.classList.toggle('on',+b.dataset.s===s));if(s===3)flow();else{stage=s;render();}}
+  $$('#geoStages button').forEach(b=>b.onclick=()=>setStage(+b.dataset.s));
+  $$('#geoMode button').forEach(b=>b.onclick=()=>{mode=b.dataset.m;$$('#geoMode button').forEach(x=>x.classList.toggle('on',x===b));});
+  function setProb(arr,i,v){const rest=arr.reduce((s,x,j)=>j===i?s:s+x,0);arr[i]=v;const tgt=1-v;for(let j=0;j<arr.length;j++)if(j!==i)arr[j]=rest>1e-9?arr[j]*tgt/rest:tgt/(arr.length-1);}
+  function pt(e){const P=svg.createSVGPoint();P.x=e.clientX;P.y=e.clientY;return P.matrixTransform(svg.getScreenCTM().inverse());}
+  function colAt(x){const i=Math.floor((x-X0)/CW);return i>=0&&i<n?i:-1;}
+  svg.addEventListener('pointerdown',e=>{if(anim)return;const P=pt(e),i=colAt(P.x);if(i<0)return;drag={i};frozen=ymax();hover=i;svg.setPointerCapture(e.pointerId);setV(P);});
+  svg.addEventListener('pointermove',e=>{const P=pt(e);if(drag){setV(P);return;}const i=colAt(P.x);if(i>=0&&i!==hover&&!anim){hover=i;render();}});
+  const end=()=>{if(!drag)return;drag=null;frozen=null;render();distChanged('geo');};
+  svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);
+  function setV(P){const v=clamp((BASE-P.y)/CH*frozen,.005,.96);setProb(DIST[mode],drag.i,v);render();}
+  $$('#geo [data-preset]').forEach(b=>b.onclick=()=>{if(anim)return;const k=b.dataset.preset;
+    if(k==='rand'){DIST.q=randDist();DIST.p=randDist();}else{DIST.q=PRESETS[k].q.slice();DIST.p=PRESETS[k].p.slice();}render();distChanged('geo');});
+  DIST.ls.push(src=>{if(src!=='geo')render();});
+  render();
+})();
+
+/* =========================================================
+   CH5: Monte Carlo
+   ========================================================= */
+(function(){
+  const svg=$('#mcSvg');const n=5,PX0=34,PCW=72,PBW=46,BASE=292,CH=236,HX0=440,HCW=60,HBW=40;
+  const px=i=>PX0+PCW*i+PCW/2,hx=i=>HX0+HCW*i+HCW/2;
+  let mode='A',counts=[0,0,0,0,0],N=0,acc=0,run=0;const dots=[];
+  const procG=S('g',{},svg),dotG=S('g',{},svg),histG=S('g',{},svg),fly=S('g',{},svg);
+  T('text',{x:PX0,y:16,class:'svg-title'},svg,'采样过程：在 q 中撒点');
+  const hTitle=T('text',{x:HX0,y:16,class:'svg-title'},svg,'');
+  const yP=()=>Math.max(...DIST.p,...DIST.q)*1.12;
+  const py=(v,Y)=>BASE-v/Y*CH;
+  const theo=()=>{const b=betaOf();if(mode==='A')return DIST.p.slice();if(mode==='B')return DIST.p.map((p,i)=>Math.min(p,DIST.q[i])+(1-b)*p);return DIST.q.slice();};
+  function drawProc(){procG.innerHTML='';const Y=yP();
+    S('line',{x1:PX0,y1:BASE,x2:PX0+PCW*n,y2:BASE,stroke:'#666'},procG);
+    for(let i=0;i<n;i++){const q=DIST.q[i],p=DIST.p[i],x=px(i)-PBW/2;
+      S('rect',{x,y:py(q,Y),width:PBW,height:q/Y*CH,fill:BLUE,'fill-opacity':.14,stroke:BLUE,'stroke-width':1.5},procG);
+      if(mode==='A'&&p>q)S('rect',{x,y:py(p,Y),width:PBW,height:(p-q)/Y*CH,fill:'none',stroke:GOLD,'stroke-dasharray':'4 3'},procG);
+      if(mode!=='C')S('line',{x1:x-6,y1:py(p,Y),x2:x+PBW+6,y2:py(p,Y),stroke:YELLOW,'stroke-width':2.4},procG);
+      T('text',{x:px(i),y:BASE+24,'text-anchor':'middle',class:'svg-lab','font-size':16},procG,DIST.labels[i]);}}
+  function drawHist(){histG.innerHTML='';const th=theo(),emp=counts.map(c=>N?c/N:0);const Y=Math.max(...DIST.p,...th,...emp)*1.15;
+    S('line',{x1:HX0,y1:BASE,x2:HX0+HCW*n,y2:BASE,stroke:'#666'},histG);
+    for(let i=0;i<n;i++){const x=hx(i)-HBW/2;
+      if(N)S('rect',{x,y:py(emp[i],Y),width:HBW,height:emp[i]/Y*CH,fill:'#cfcfcf','fill-opacity':.55},histG);
+      S('rect',{x:x-3,y:py(DIST.p[i],Y),width:HBW+6,height:DIST.p[i]/Y*CH,fill:'none',stroke:YELLOW,'stroke-width':2.2},histG);
+      if(mode!=='A')S('rect',{x:x+3,y:py(th[i],Y),width:HBW-6,height:th[i]/Y*CH,fill:'none',stroke:'#fff','stroke-dasharray':'4 3','stroke-width':1.4},histG);
+      T('text',{x:hx(i),y:BASE+24,'text-anchor':'middle',class:'svg-lab','font-size':16},histG,DIST.labels[i]);
+      if(N)T('text',{x:hx(i),y:py(Math.max(emp[i],DIST.p[i]),Y)-6,'text-anchor':'middle',class:'svg-axis'},histG,emp[i].toFixed(3));}
+    hTitle.textContent=`输出频率（N = ${N}）`;
+    const tv=emp.reduce((s,e,i)=>s+Math.abs(e-DIST.p[i]),0)/2;
+    $('#mcStat').innerHTML=N?`接受率 <b>${(acc/N).toFixed(3)}</b>（理论 ${mode==='C'?'1.000':f2(betaOf())}）· TV(实验, p) = <b style="color:${tv<.02?GREEN:(tv<.05?GOLD:RED)}">${tv.toFixed(3)}</b>`:'还没有样本';}
+  function one(){const q=DIST.q,p=DIST.p;const x=sampleCat(q),yv=Math.random()*q[x];const accepted=mode==='C'||yv<p[x];let z=x,zy=yv;
+    if(!accepted){if(mode==='A'){const res=p.map((v,i)=>Math.max(0,v-q[i]));if(res.some(v=>v>1e-12)){z=sampleCat(res);zy=q[z]+Math.random()*(p[z]-q[z]);}else{z=sampleCat(p);zy=Math.random()*p[z];}}
+      else{z=sampleCat(p);zy=Math.random()*p[z];}}
+    return{x,yv,accepted,z,zy};}
+  const jit=()=>(Math.random()-.5)*(PBW-10);
+  function addDot(x,y,c){const d=S('circle',{cx:x,cy:y,r:2.4,fill:c,'fill-opacity':.6},dotG);dots.push(d);if(dots.length>700)dots.shift().remove();}
+  function record(s){counts[s.z]++;N++;if(s.accepted)acc++;}
+  async function animOne(id){const s=one(),Y=yP();const x0=px(s.x)+jit(),y0=py(s.yv,Y);
+    const d=S('circle',{cx:x0,cy:26,r:6.5,fill:'#fff'},fly);
+    await tween(420,t=>d.setAttribute('cy',lerp(26,y0,t)));if(id!==run){d.remove();return;}
+    d.setAttribute('fill',s.accepted?GREEN:RED);await sleep(260);
+    if(!s.accepted){const x1=px(s.z)+jit(),y1=py(s.zy,Y);const d2=S('circle',{cx:x0,cy:y0,r:6.5,fill:GOLD},fly);
+      await tween(560,t=>{d2.setAttribute('cx',lerp(x0,x1,t));d2.setAttribute('cy',lerp(y0,y1,t)-Math.sin(t*Math.PI)*46);});d2.remove();addDot(x1,y1,GOLD);}
+    d.remove();addDot(x0,y0,s.accepted?GREEN:RED);record(s);drawHist();}
+  function batch(k){const Y=yP();for(let i=0;i<k;i++){const s=one();if(i>=k-300){addDot(px(s.x)+jit(),py(s.yv,Y),s.accepted?GREEN:RED);if(!s.accepted)addDot(px(s.z)+jit(),py(s.zy,Y),GOLD);}record(s);}drawHist();}
+  function clear(){run++;counts=[0,0,0,0,0];N=0;acc=0;dots.length=0;dotG.innerHTML='';fly.innerHTML='';drawProc();drawHist();}
+  let busy=false;
+  $('#mc1').onclick=async()=>{if(busy)return;busy=true;await animOne(run);busy=false;};
+  $('#mc10').onclick=async()=>{if(busy)return;busy=true;const id=run;for(let i=0;i<10&&id===run;i++)await animOne(id);busy=false;};
+  $('#mc1k').onclick=()=>batch(1000);$('#mc10k').onclick=()=>batch(10000);$('#mcClr').onclick=()=>{busy=false;clear();};
+  $$('#mcMode button').forEach(b=>b.onclick=()=>{mode=b.dataset.m;$$('#mcMode button').forEach(x=>x.classList.toggle('on',x===b));busy=false;clear();});
+  DIST.ls.push(()=>{busy=false;clear();});
+  clear();
+})();
+
+/* =========================================================
+   CH7: speedup
+   ========================================================= */
+(function(){
+  const A=$('#spA'),G=$('#spG'),Cc=$('#spC'),s1=$('#spBars'),s2=$('#spCurve');
+  const EN=(a,g)=>a>=.9999?g+1:(1-Math.pow(a,g+1))/(1-a);
+  const SP=(a,g,c)=>EN(a,g)/(g*c+1);
+  function bars(a,g){s1.innerHTML='';const L=46,R=12,Tp=26,B=40,W=400,Hh=260,pw=W-L-R,ph=Hh-Tp-B;
+    const P=[];for(let n=1;n<=g+1;n++)P.push(n<=g?Math.pow(a,n-1)*(1-a):Math.pow(a,g));const Y=Math.max(.3,...P)*1.15;const bw=pw/(g+1);
+    T('text',{x:L,y:16,class:'svg-title'},s1,'每轮产出 token 数 N 的分布');
+    for(let v=0;v<=Y+1e-9;v+=Y>.6?.2:.1){const y=Tp+ph-v/Y*ph;S('line',{x1:L,y1:y,x2:L+pw,y2:y,stroke:'#25282e'},s1);T('text',{x:L-6,y:y+4,'text-anchor':'end',class:'svg-axis'},s1,v.toFixed(1));}
+    P.forEach((p,i)=>{const x=L+i*bw+bw*.15,h=p/Y*ph;S('rect',{x,y:Tp+ph-h,width:bw*.7,height:h,fill:i===g?YELLOW:GREEN,'fill-opacity':.8,rx:2},s1);
+      if(g<=12||i%2===0)T('text',{x:x+bw*.35,y:Tp+ph+16,'text-anchor':'middle',class:'svg-axis'},s1,String(i+1));});
+    const m=EN(a,g),mx=L+(m-.5)*bw;S('line',{x1:mx,y1:Tp,x2:mx,y2:Tp+ph,stroke:'#fff','stroke-dasharray':'4 4'},s1);
+    T('text',{x:mx+(m>g*.7?-5:5),y:Tp+12,class:'svg-small',fill:'#fff','text-anchor':m>g*.7?'end':'start'},s1,'E[N] = '+m.toFixed(2));
+    T('text',{x:L+pw/2,y:Hh-6,'text-anchor':'middle',class:'svg-small'},s1,'N（黄色：全部接受 + 奖励 = γ+1）');}
+  function curve(a,g,c){s2.innerHTML='';const L=46,R=14,Tp=26,B=40,W=440,Hh=260,pw=W-L-R,ph=Hh-Tp-B,GM=16;
+    const ss=[],es=[];for(let k=1;k<=GM;k++){ss.push(SP(a,k,c));es.push(EN(a,k));}
+    const Y=Math.max(2,...es,...ss)*1.08;const xs=k=>L+(k-1)/(GM-1)*pw,ys=v=>Tp+ph-v/Y*ph;
+    T('text',{x:L,y:16,class:'svg-title'},s2,'加速比 vs 草稿长度 γ');
+    const st=Y>8?2:(Y>4?1:.5);for(let v=0;v<=Y+1e-9;v+=st){const y=ys(v);S('line',{x1:L,y1:y,x2:L+pw,y2:y,stroke:'#25282e'},s2);T('text',{x:L-6,y:y+4,'text-anchor':'end',class:'svg-axis'},s2,v+'×');}
+    for(let k=1;k<=GM;k+=k<4?1:2)T('text',{x:xs(k),y:Tp+ph+16,'text-anchor':'middle',class:'svg-axis'},s2,String(k));
+    S('line',{x1:L,y1:ys(1),x2:L+pw,y2:ys(1),stroke:RED,'stroke-dasharray':'5 4','stroke-opacity':.7},s2);
+    T('text',{x:L+pw,y:ys(1)+14,'text-anchor':'end',class:'svg-small',fill:RED},s2,'1×（不赚不亏）');
+    S('path',{d:es.map((v,i)=>(i?'L':'M')+xs(i+1)+','+ys(v)).join(''),fill:'none',stroke:BLUE,'stroke-dasharray':'5 4','stroke-width':1.6},s2);
+    S('path',{d:ss.map((v,i)=>(i?'L':'M')+xs(i+1)+','+ys(v)).join(''),fill:'none',stroke:YELLOW,'stroke-width':3},s2);
+    let best=0;ss.forEach((v,i)=>{if(v>ss[best])best=i;});
+    const bx=xs(best+1),by=ys(ss[best]);T('text',{x:bx,y:by-6,'text-anchor':'middle',fill:GOLD,'font-size':20},s2,'★');
+    S('circle',{cx:xs(g),cy:ys(ss[g-1]),r:6,fill:YELLOW,stroke:'#111','stroke-width':2},s2);
+    T('text',{x:L+pw/2,y:Hh-6,'text-anchor':'middle',class:'svg-small'},s2,'γ');
+    return best+1;}
+  function upd(){const a=+A.value,g=+G.value,c=+Cc.value;$('#spAv').textContent=a.toFixed(2);$('#spGv').textContent=g;$('#spCv').textContent=c.toFixed(3);
+    bars(a,g);const best=curve(a,g,c);const s=SP(a,g,c);
+    $('#spEN').textContent=EN(a,g).toFixed(2)+' 个';$('#spCost').textContent=(g*c+1).toFixed(3);$('#spS').textContent=s.toFixed(2)+'×';
+    $('#spBest').textContent=`γ* = ${best}（${SP(a,best,c).toFixed(2)}×）`;}
+  [A,G,Cc].forEach(e=>e.oninput=upd);
+  $$('#spd [data-sp]').forEach(b=>b.onclick=()=>{const[a,g,c]=b.dataset.sp.split(',').map(Number);A.value=a;G.value=g;Cc.value=c;upd();});
+  upd();
+})();
+
+/* =========================================================
+   CH8: tree attention
+   ========================================================= */
+(function(){
+  const svg=$('#treeSvg');
+  const N=[{t:'的',x:48,y:165,par:-1},{t:'核心',x:150,y:105,par:0},{t:'原理',x:150,y:230,par:0},{t:'思想',x:252,y:70,par:1},{t:'在于',x:252,y:140,par:1},{t:'是',x:252,y:230,par:2},{t:'是',x:344,y:70,par:3}];
+  const anc=i=>{const a=[];while(i>0){a.push(i);i=N[i].par;}return a;};
+  const eG=S('g',{},svg),nG=S('g',{},svg),mG=S('g',{},svg);
+  const edges=N.map((n,i)=>i?S('line',{x1:N[n.par].x,y1:N[n.par].y,x2:n.x,y2:n.y,stroke:'#555','stroke-width':2},eG):null);
+  const nodes=N.map((n,i)=>{const g=S('g',{style:'cursor:pointer'},nG);const c=S('circle',{cx:n.x,cy:n.y,r:24,fill:i?'#1b2329':'#2a2a2a',stroke:i?BLUE:'#bbb','stroke-width':2},g);
+    T('text',{x:n.x,y:n.y+6,'text-anchor':'middle',class:'svg-tok',fill:i?BLUE:'#eee','font-size':15},g,n.t);
+    if(i)T('text',{x:n.x,y:n.y-30,'text-anchor':'middle',class:'svg-axis',fill:'#777'},g,'#'+i);return{g,c};});
+  T('text',{x:20,y:22,class:'svg-title'},svg,'草稿树（「的」是已确定的最后一个 token）');
+  const X0=480,Y0=58,C=36,K=6;
+  T('text',{x:X0,y:22,class:'svg-title'},svg,'树形注意力掩码（展平后的序列）');
+  ['缓存',...N.slice(1).map((n,i)=>'#'+(i+1))].forEach((h,j)=>T('text',{x:X0+j*C+C/2,y:Y0-8,'text-anchor':'middle',class:'svg-axis'},mG,h));
+  const cells=[],rowLab=[];
+  for(let i=1;i<=K;i++){const a=anc(i);rowLab.push(T('text',{x:X0-8,y:Y0+(i-1)*C+C/2+5,'text-anchor':'end',class:'svg-tok','font-size':14,fill:BLUE,style:'cursor:pointer'},mG,`#${i} ${N[i].t}`));
+    const row=[];for(let j=0;j<=K;j++){const vis=j===0||a.includes(j);row.push(S('rect',{x:X0+j*C+2,y:Y0+(i-1)*C+2,width:C-4,height:C-4,rx:4,fill:vis?YELLOW:'#24272d','fill-opacity':vis?(j===0?.3:.6):1},mG));}cells.push(row);}
+  function hl(i){const a=i>0?anc(i):[];
+    nodes.forEach((o,j)=>{const on=a.includes(j)||(i>0&&j===0);o.c.setAttribute('stroke-width',on?3.5:2);o.c.setAttribute('fill',on?(j?'#1f4250':'#444'):(j?'#1b2329':'#2a2a2a'));});
+    edges.forEach((e,j)=>{if(!e)return;const on=a.includes(j);e.setAttribute('stroke',on?YELLOW:'#555');e.setAttribute('stroke-width',on?3.5:2);});
+    cells.forEach((row,r)=>row.forEach((c,j)=>{const vis=j===0||anc(r+1).includes(j);c.setAttribute('fill-opacity',vis?(r+1===i?1:(j===0?.25:.45)):1);}));
+    rowLab.forEach((l,r)=>l.setAttribute('fill',r+1===i?YELLOW:BLUE));}
+  nodes.forEach((o,i)=>{if(i){o.g.addEventListener('mouseenter',()=>hl(i));o.g.addEventListener('click',()=>hl(i));}});
+  rowLab.forEach((l,r)=>{l.addEventListener('mouseenter',()=>hl(r+1));l.addEventListener('click',()=>hl(r+1));});
+  T('text',{x:20,y:288,class:'svg-small'},svg,'候选路径：核心→思想→是 / 核心→在于 / 原理→是');
+  hl(6);
+})();
+
+/* =========================================================
+   quiz
+   ========================================================= */
+(function(){
+  const Q=[
+   {q:'1. 使用标准的修正拒绝采样时，投机采样的输出质量会介于草稿模型和目标模型之间吗？',o:['会，质量介于两者之间','不会，输出分布与目标模型完全相同','只有贪心解码时才不会下降'],a:1,
+    e:'第四章的证明对<b>任意</b>草稿分布 q 都成立，采样和贪心都一样。草稿的好坏只影响速度（接受率），不影响输出分布。'},
+   {q:'2. 某个位置上，草稿 token 的 q(x̃) = 0.4，p(x̃) = 0.1。它被接受的概率是多少？',o:['0.1','0.25','0.4','0.75'],a:1,
+    e:'min(1, p/q) = min(1, 0.1/0.4) = 0.25。草稿把这个 token 高估了 4 倍，所以只按 1/4 的比例接受。'},
+   {q:'3. 如果反过来，q(x̃) = 0.1，p(x̃) = 0.4 呢？',o:['0.25','0.4','1','0.1'],a:2,
+    e:'p ≥ q 时 min(1, p/q) = 1，必定接受。草稿低估了这个 token，没有关系，缺的那部分概率会在「拒绝后从残差采样」中补上。'},
+   {q:'4. γ = 4，第 2 个草稿被拒绝。这一轮最终产出几个 token？',o:['1 个','2 个','3 个','5 个'],a:1,
+    e:'第 1 个草稿被接受，第 2 个位置从残差分布中重新采样出 1 个纠正 token，第 3、4 个草稿作废。共 1 + 1 = 2 个。'},
+   {q:'5. α = 0.8，γ = 4，在 i.i.d. 假设下，每轮期望产出多少个 token？',o:['3.2','3.36','4','5'],a:1,
+    e:'E[N] = (1 − α^{γ+1}) / (1 − α) = (1 − 0.8⁵) / 0.2 = (1 − 0.32768) / 0.2 ≈ 3.36。'},
+   {q:'6. 下列哪个场景中，投机采样的收益最可能变小甚至为负？',o:['batch = 1 的交互式聊天','大 batch、追求吞吐的离线批处理','代码补全','基于长文档的摘要'],a:1,
+    e:'投机采样是用空闲算力换延迟。batch 很大时，前向本身已接近计算受限，额外验证的 token 不再「免费」。（长上下文下 KV cache 读取会改变这一结论，见第九章。）'},
+   {q:'7. 被拒绝后，为什么不能直接从 p 重新采样，而要从 max(0, p − q) 采样？',o:['为了计算更快','因为接受环节已经给每个 token 分配了 min(p,q) 的概率，只需补上缺口 p − min(p,q)','因为 p 在拒绝后会改变'],a:1,
+    e:'直接从 p 采样会得到 min(p,q) + (1−β)p ≠ p，草稿高估的 token 会被重复计算（第五章可以亲手验证）。残差恰好是「p 还没被满足的部分」。'},
+  ];
+  const box=$('#quizBox');
+  Q.forEach(item=>{const d=H('div',{class:'quiz'},box);H('div',{class:'qq'},d,item.q);const os=H('div',{class:'opts'},d);
+    const exp=H('div',{class:'exp'},d,item.e);
+    item.o.forEach((o,i)=>{const b=H('button',{class:'btn opt'},os,o);b.onclick=()=>{if(d.classList.contains('done'))return;d.classList.add('done');
+      $$('.opt',os).forEach((x,j)=>{if(j===item.a)x.classList.add('right');else if(j===i)x.classList.add('wrong');});
+      exp.insertAdjacentHTML('afterbegin',i===item.a?'<b class="c-green">✓ 正确。</b>':'<b class="c-red">✗ 不对。</b>');};});});
+})();
+</script>
+</body>
+</html>
