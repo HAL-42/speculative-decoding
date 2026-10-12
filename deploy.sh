@@ -1,34 +1,20 @@
 #!/usr/bin/env bash
-# 把本目录发布到 GitHub Pages：bash deploy.sh [仓库名]
+# 发布已有仓库的 main 分支到 GitHub Pages。
 set -euo pipefail
 cd "$(dirname "$0")"
-REPO="${1:-speculative-decoding}"
-
-if ! gh auth status -h github.com >/dev/null 2>&1; then
-  echo "gh 未登录或 token 失效，开始重新登录……"
-  gh auth login -h github.com -w
+gh auth status -h github.com >/dev/null
+if [ "$(git branch --show-current)" != "main" ]; then
+  echo "请切换到 main 分支后再发布。" >&2
+  exit 1
 fi
-OWNER="$(gh api user -q .login)"
-
-[ -d .git ] || git init -q -b main
+if ! git diff --cached --quiet; then
+  echo "已有暂存修改，请先检查并处理，再运行发布脚本。" >&2
+  exit 1
+fi
 git add index.html README.md .nojekyll deploy.sh
 if ! git diff --cached --quiet; then
-  git commit -q -m "Add interactive explainer on speculative decoding
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
+  git commit -m "[Web]: ✨ 更新投机采样交互式学习网页"
 fi
-
-if gh repo view "$OWNER/$REPO" >/dev/null 2>&1; then
-  git remote get-url origin >/dev/null 2>&1 || git remote add origin "https://github.com/$OWNER/$REPO.git"
-  git push -u origin main
-else
-  gh repo create "$REPO" --public --source=. --remote=origin --push \
-    --description "投机采样（Speculative Decoding）可视化交互讲解"
-fi
-
-# 开启 Pages（已开启时该请求会失败，忽略即可）
-gh api -X POST "repos/$OWNER/$REPO/pages" -f "source[branch]=main" -f "source[path]=/" >/dev/null 2>&1 || true
-
-echo
-echo "仓库：https://github.com/$OWNER/$REPO"
-echo "页面：https://$OWNER.github.io/$REPO/  （首次构建约需 1 分钟）"
+git push origin main
+echo "已推送，GitHub Pages 将自动构建。"
+gh api repos/HAL-42/speculative-decoding/pages --jq .html_url
